@@ -216,6 +216,16 @@ export interface MemoryUpdateResult {
   readonly updated: boolean;
   readonly blocksChanged: readonly CoreMemoryLabel[];
   readonly error?: string;
+  /**
+   * Aggregate provider usage across this update's LLM completion(s) when the
+   * backing adapter reports it. Absent for failed/local/mock calls.
+   */
+  readonly usage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
+  /** How many LLM completions this update attempted (normally 1; >=1 with retries). */
+  readonly llmCalls?: number;
 }
 
 /**

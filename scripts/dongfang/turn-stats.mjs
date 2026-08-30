@@ -93,6 +93,34 @@ let grandIn = 0;
 let grandOut = 0;
 let grandNarrIn = 0;
 let grandNarrOut = 0;
+let grandNarrCount = 0;
+let grandBackCount = 0;
+let grandNarrLat = 0;
+let grandMemLat = 0;
+let grandElapsed = 0;
+
+// Memory updater LLM calls (framework-invoked, not runtimes — see
+// post-turn-memory.ts which writes trace type "memory.llm").
+const memoryRows = db
+  .prepare(
+    `SELECT turn_id AS turnId, payload, created_at AS createdAt
+       FROM trace_events WHERE session_id = ? AND type = 'memory.llm'
+       ORDER BY created_at`,
+  )
+  .all(sessionId)
+  .map((r) => {
+    let p = {};
+    try { p = JSON.parse(r.payload) ?? {}; } catch {}
+    return { turnId: r.turnId, calls: p.calls ?? 1, inputTokens: p.inputTokens ?? 0, outputTokens: p.outputTokens ?? 0, error: p.error, durationMs: p.durationMs, at: Date.parse(r.createdAt) };
+  });
+const memoryByTurn = new Map();
+for (const m of memoryRows) {
+  if (!memoryByTurn.has(m.turnId)) memoryByTurn.set(m.turnId, []);
+  memoryByTurn.get(m.turnId).push(m);
+}
+const memoryCallsTotal = memoryRows.reduce((a, m) => a + m.calls, 0);
+const memoryInTotal = memoryRows.reduce((a, m) => a + m.inputTokens, 0);
+const memoryOutTotal = memoryRows.reduce((a, m) => a + m.outputTokens, 0);
 
 console.log(`session ${sessionId} — ${dbPath}`);
 console.log("─".repeat(100));
@@ -110,17 +138,32 @@ for (const { turnId, entries } of turns.values()) {
     );
   const narrSum = sum(narr);
   const backSum = sum(back);
-  const maxDur = Math.max(...entries.map((e) => e.durationMs ?? 0));
+  const memList = memoryByTurn.get(turnId) ?? [];
+  const memCalls = memList.reduce((a, m) => a + m.calls, 0);
+  const memIn = memList.reduce((a, m) => a + m.inputTokens, 0);
+  const memOut = memList.reduce((a, m) => a + m.outputTokens, 0);
+  const narrLat = narr.reduce((a, e) => a + (e.durationMs ?? 0), 0);
+  const memLat = memList.reduce((a, m) => a + (m.durationMs ?? 0), 0);
+  const maxDur = Math.max(...entries.map((e) => e.durationMs ?? 0), ...memList.map((m) => m.durationMs ?? 0));
+  // wall-clock elapsed for the turn: span between first and last event
+  const stamps = [...entries.map((e) => Date.parse(e.createdAt)), ...memList.map((m) => m.at ?? NaN)].filter(Number.isFinite);
+  const turnElapsed = stamps.length >= 2 ? Math.max(...stamps) - Math.min(...stamps) : 0;
   grandCalls += llm.length;
   grandIn += narrSum.in + backSum.in;
   grandOut += narrSum.out + backSum.out;
   grandNarrIn += narrSum.in;
   grandNarrOut += narrSum.out;
+  grandNarrCount += narr.length;
+  grandBackCount += back.length;
+  grandNarrLat += narrLat;
+  grandMemLat += memLat;
+  grandElapsed += turnElapsed;
   console.log(
-    `turn ${turnId}: ${llm.length} LLM call(s)` +
-      ` | narrative ${narr.length} (in ${narrSum.in} / out ${narrSum.out} tok)` +
+    `turn ${turnId.slice(0, 8)}: ${llm.length + memCalls} LLM call(s)` +
+      ` | narrative ${narr.length} (in ${narrSum.in} / out ${narrSum.out} tok, ${narrLat}ms)` +
       ` | background ${back.length}${back.length ? ` (in ${backSum.in} / out ${backSum.out} tok)` : ""}` +
-      ` | slowest runtime ${maxDur}ms`,
+      ` | memory ${memCalls}${memCalls || memList.length ? ` (in ${memIn} / out ${memOut} tok, ${memLat}ms${memList.some((m) => m.error) ? ", error" : ""})` : ""}` +
+      ` | elapsed ${turnElapsed}ms | slowest ${maxDur}ms`,
   );
   for (const e of entries) {
     const t = tokens(e.tokenUsage);
@@ -129,10 +172,28 @@ for (const { turnId, entries } of turns.values()) {
         (t ? ` tokens in ${t.input ?? "?"} out ${t.output ?? "?"}` : " (no LLM)"),
     );
   }
+  for (const m of memList) {
+    console.log(
+      `   · memory-updater [memory.llm] ${m.durationMs ?? "?"}ms tokens in ${m.inputTokens} out ${m.outputTokens}` +
+        (m.error ? ` error: ${String(m.error).slice(0, 80)}` : ""),
+    );
+  }
 }
 console.log("─".repeat(100));
 console.log(
-  `TOTAL turns=${turns.size} llmCalls=${grandCalls} tokens in=${grandIn} out=${grandOut}` +
-    ` | narrative in=${grandNarrIn} out=${grandNarrOut}` +
-    ` | background in=${grandIn - grandNarrIn} out=${grandOut - grandNarrOut}`,
+  `TOTAL turns=${turns.size} llmCalls=${grandCalls + memoryCallsTotal}` +
+    ` tokens in=${grandIn + memoryInTotal} out=${grandOut + memoryOutTotal}` +
+    ` | narrative ${grandNarrCount} (in ${grandNarrIn} / out ${grandNarrOut})` +
+    ` | background ${grandBackCount} (in ${grandIn - grandNarrIn} / out ${grandOut - grandNarrOut})` +
+    ` | memory ${memoryCallsTotal} (in ${memoryInTotal} / out ${memoryOutTotal})`,
+);
+console.log(
+  `[accounting] narrator ${grandNarrCount} + background ${grandBackCount} + memory ${memoryCallsTotal}` +
+    ` = total ${grandNarrCount + grandBackCount + memoryCallsTotal}` +
+    (grandNarrCount + grandBackCount + memoryCallsTotal === grandCalls + memoryCallsTotal
+      ? "  ✓ balanced"
+      : "  ✗ MISMATCH"),
+);
+console.log(
+  `[latency] narrative ${grandNarrLat}ms | memory ${grandMemLat}ms | summed turn elapsed ${grandElapsed}ms`,
 );

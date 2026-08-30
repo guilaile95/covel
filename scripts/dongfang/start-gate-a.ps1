@@ -55,29 +55,10 @@ foreach ($p in $ports) {
     }
 }
 
-# ── 2. first-run LLM config (same model as your A path!) ────────
-$llmToml = Join-Path $repo "llm.toml"
-$envLlm = Join-Path $repo ".env.llm"
-if (-not (Test-Path $llmToml) -or -not (Test-Path $envLlm)) {
-    Write-Host ""
-    Write-Host "=== First-time setup =========================================="
-    Write-Host " Gate A requires the SAME model as your plain-Chat A path."
-    Write-Host " 1. in llm.toml: set [covel.story] provider/model/baseUrl to that model"
-    Write-Host "    (Gemini via Google AI Studio OpenAI-compat endpoint works;"
-    Write-Host "     DeepSeek preset is already there as the default)"
-    Write-Host " 2. in .env.llm: un-comment and fill the matching *_API_KEY line"
-    Write-Host " Both files will open in Notepad now. Do NOT commit them."
-    Write-Host "==============================================================="
-    if (-not (Test-Path $llmToml)) { Copy-Item (Join-Path $repo "llm.toml.example") $llmToml }
-    if (-not (Test-Path $envLlm)) { Copy-Item (Join-Path $repo ".env.llm.example") $envLlm }
-    if ($AutoQuit) {
-        Write-Host "[autoquit] first-run config files staged; fill them before a real run."
-    } else {
-        Start-Process notepad $llmToml
-        Start-Process notepad $envLlm
-        Read-Host "Save both files, then press Enter to continue"
-    }
-}
+# ── 2. model config happens in the browser Settings UI ─────────
+# No file editing: Covel ships a default story slot and the Settings UI
+# (provider keys / model slots) persists the Owner's choice. The hard rule
+# stays: pick the SAME model as the plain-Chat A path.
 
 # ── 3. start dev services ───────────────────────────────────────
 $env:COVEL_MEMORY_UPDATES = $Memory
@@ -101,10 +82,26 @@ if (-not $healthy) {
     if ($dev -and !$dev.HasExited) { Stop-Process -Id $dev.Id -Force -ErrorAction SilentlyContinue }
     exit 1
 }
-Start-Process "http://localhost:5173/"
+# Discover the actual web URL from the dev log (5173 may be taken by another
+# worktree, in which case vite shifts to 5174+).
+$webPort = 5173
+$devLogPath = Join-Path $resultsDir "dev.log"
+for ($i = 0; $i -lt 10; $i++) {
+    if (Test-Path $devLogPath) {
+        $m = Select-String -Path $devLogPath -Pattern "localhost:(\d+)/" | Select-Object -First 1
+        if ($m) { $webPort = [int]$m.Matches[0].Groups[1].Value; break }
+    }
+    Start-Sleep -Seconds 1
+}
+Start-Process "http://localhost:$webPort/"
 Write-Host ""
 Write-Host "==============================================================="
-Write-Host " Browser is open. Play now:"
+Write-Host " Browser is open at http://localhost:$webPort/ . First visit:"
+Write-Host "   -> open Settings -> model/provider panels -> pick the SAME"
+Write-Host "      model you will use in the plain-Chat A path, paste your"
+Write-Host "      API key there (stored in your browser, not in the repo)."
+Write-Host ""
+Write-Host " Then play:"
 Write-Host "   1. pick the world: 直玩（提示词透传） / Prompt Play (Passthrough)"
 Write-Host "   2. expect NO char-creation form; the prompt hosts creation itself"
 Write-Host "   3. free-play at least 5 natural turns (no scripted lines, no rerolls)"
@@ -121,16 +118,60 @@ function Collect-Sessions {
     if (-not $items) { Write-Host "[collect] no sessions found."; return }
     $new = @($items | Where-Object { [datetime]$_.createdAt -ge [datetime]$runStart })
     if ($new.Count -eq 0) { Write-Host "[collect] no NEW sessions since this run started."; return }
+    $reportLines = @(
+        "# Gate A run report",
+        "",
+        "- run: $runId",
+        "- memory mode: **$Memory**",
+        "- started (UTC): $runStart",
+        "- collected (UTC): $((Get-Date).ToUniversalTime().ToString('o'))",
+        "- model/provider: as configured in the browser Settings UI (same as the plain-Chat A path); llm.toml story slot: $(Get-StorySlotSummary)",
+        "",
+        "## Sessions",
+        ""
+    )
     foreach ($s in $new) {
-        Write-Host "[collect] session $($s.id) (created $($s.createdAt), phase $($s.phase))"
+        Write-Host "[collect] session $($s.id) (created $($s.createdAt), phase $($s.phase), turns $($s.completedPlayerTurns))"
         $out = Join-Path $resultsDir "$($s.id).txt"
         node (Join-Path $repo "scripts\dongfang\turn-stats.mjs") $s.id | Out-File -FilePath $out -Encoding utf8
         Get-Content $out
         Write-Host "           -> saved: $out"
+        $reportLines += @(
+            "### $($s.id)",
+            "",
+            "- phase: $($s.phase) | completed player turns: $($s.completedPlayerTurns) | status: $($s.status)",
+            "- save/resume: Owner marks ☐ after closing and reopening the browser and continuing this session",
+            "",
+            '```',
+            (Get-Content $out -Raw),
+            '```'
+        )
     }
+    $reportLines += @(
+        "",
+        "## Owner checklist (fill by hand)",
+        "",
+        "- [ ] prompt-hosted character creation worked (no covel form)",
+        "- [ ] no visible covel framing / person / length / action-menu residue",
+        "- [ ] prompt rules still held after 5+ free turns",
+        "- [ ] save -> close -> reopen -> continue worked for every session above",
+        "- [ ] overall experience not worse than the plain-Chat A path",
+        ""
+    )
+    $reportLines | Out-File (Join-Path $resultsDir "report.md") -Encoding utf8
+    Write-Host "[collect] report: $(Join-Path $resultsDir 'report.md')"
     @{ runId = $runId; memory = $Memory; runStart = $runStart; collectedAt = (Get-Date).ToUniversalTime().ToString("o");
        sessions = @($new | ForEach-Object { $_.id }) } |
         ConvertTo-Json | Out-File (Join-Path $resultsDir "meta.json") -Encoding utf8
+}
+
+function Get-StorySlotSummary {
+    $toml = Join-Path $repo "llm.toml"
+    if (Test-Path $toml) {
+        $m = Select-String -Path $toml -Pattern "^\s*model\s*=\s*""([^""]+)""" | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value }
+    }
+    return "(no llm.toml - built-in default or browser Settings UI override)"
 }
 
 if ($AutoQuit) {

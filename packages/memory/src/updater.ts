@@ -156,6 +156,12 @@ export function createMemoryUpdater(
 
     let authoritativeBlocksChanged: CoreMemoryLabel[] = [];
 
+    // Gate instrumentation (Dongfang): aggregate this update's LLM completions
+    // so the post-turn trace row can account for memory LLM cost.
+    let llmCalls = 0;
+    let usageSeen = false;
+    const usageAccum = { inputTokens: 0, outputTokens: 0 };
+
     try {
       // Persist confirmed character fields before waiting on the summarizer.
       // This deterministic correction must survive a slow or failed LLM call.
@@ -186,6 +192,12 @@ export function createMemoryUpdater(
         messages: [{ role: "user", content: userPrompt }],
         model: config?.modelSlot,
       });
+      llmCalls += 1;
+      if (response.usage) {
+        usageAccum.inputTokens += response.usage.inputTokens ?? 0;
+        usageAccum.outputTokens += response.usage.outputTokens ?? 0;
+        usageSeen = true;
+      }
 
       const parsed = parseBlockUpdates(response.content, validLabels);
       enforceAuthoritativePlayerProfile({
@@ -198,6 +210,8 @@ export function createMemoryUpdater(
         return {
           updated: authoritativeBlocksChanged.length > 0,
           blocksChanged: authoritativeBlocksChanged,
+          ...(usageSeen ? { usage: { ...usageAccum } } : {}),
+          llmCalls,
         };
       }
 
@@ -208,6 +222,8 @@ export function createMemoryUpdater(
         blocksChanged: [
           ...new Set([...authoritativeBlocksChanged, ...parsed.keys()]),
         ],
+        ...(usageSeen ? { usage: { ...usageAccum } } : {}),
+        llmCalls,
       };
     } catch (err) {
       // Dynamic-summary failure is non-fatal. A deterministic authoritative
@@ -216,6 +232,8 @@ export function createMemoryUpdater(
         updated: authoritativeBlocksChanged.length > 0,
         blocksChanged: authoritativeBlocksChanged,
         error: err instanceof Error ? err.message : String(err),
+        llmCalls: Math.max(llmCalls, 1),
+        ...(usageSeen ? { usage: { ...usageAccum } } : {}),
       };
     }
   }

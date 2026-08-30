@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SessionContextSnapshot } from "@covel/context";
 import {
   resolveI18nText,
@@ -7,6 +8,9 @@ import {
 } from "@covel/shared";
 import type { TurnExecutorDeps } from "./turn-executor-types.js";
 import type { CoreMemoryBlock } from "./session-state.js";
+
+/** trace_events.type for the post-turn memory updater's LLM call(s). */
+export const MEMORY_LLM_TRACE_TYPE = "memory.llm";
 
 export function schedulePostTurnMemoryUpdate(args: {
   readonly input: TurnInput;
@@ -49,6 +53,12 @@ export function schedulePostTurnMemoryUpdate(args: {
         }
       : undefined;
 
+  // Dongfang Gate A instrumentation: the memory updater is invoked directly by
+  // the framework (not as a runtime), so record its LLM cost into trace_events
+  // under a dedicated type — turn-stats aggregates it into the Gate summary
+  // (narrator calls + memory calls = total actual LLM calls).
+  const memoryLlmStartedAt = Date.now();
+
   deps.memorySystem.updater
     .updateAfterTurn({
       sessionId: input.sessionId,
@@ -64,13 +74,59 @@ export function schedulePostTurnMemoryUpdate(args: {
           `[turn-executor] memory update for ${input.sessionId} reported error: ${result.error}`,
         );
       }
+      void recordMemoryLlmTrace(input, turnResult, deps, {
+        calls: result.llmCalls ?? 1,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        durationMs: Date.now() - memoryLlmStartedAt,
+        updated: result.updated,
+        error: result.error,
+      });
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       console.warn(
         `[turn-executor] memory update failed for ${input.sessionId}:`,
         err,
       );
+      void recordMemoryLlmTrace(input, turnResult, deps, {
+        calls: 1,
+        durationMs: Date.now() - memoryLlmStartedAt,
+        updated: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
+}
+
+/** Best-effort trace row for the post-turn memory LLM call (never throws). */
+async function recordMemoryLlmTrace(
+  input: TurnInput,
+  turnResult: TurnResult,
+  deps: TurnExecutorDeps,
+  payload: {
+    calls: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    durationMs: number;
+    updated: boolean;
+    error?: string;
+  },
+): Promise<void> {
+  try {
+    await deps.store?.addTraceEvent?.({
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      type: MEMORY_LLM_TRACE_TYPE,
+      traceId: input.sessionId,
+      turnId: turnResult.turnId ?? input.sessionId,
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(
+      "[turn-executor] failed to persist memory.llm trace event:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 function extractPlayerFieldLabels(

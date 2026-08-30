@@ -123,7 +123,12 @@ export interface SimpleCompletionAdapter<
     systemPrompt: string;
     messages: readonly { role: Role; content: string }[];
     model?: string;
-  }): Promise<{ content: string }>;
+  }): Promise<{
+    content: string;
+    /** Provider-reported usage when the backing adapter exposes it (optional;
+     *  callers must treat it as absent for local/mock adapters). */
+    usage?: { inputTokens: number; outputTokens: number };
+  }>;
 }
 
 /** Provider/model identity resolved from an LLM slot for observability. */
