@@ -27,6 +27,37 @@ export default async function guard(ctx) {
   const s = /** @type {any} */ (store);
 
   try {
+    // ── Branch 0: passthrough worlds (Prompt Play) run character creation
+    //    inside the user's own prompt — skip the opening form entirely.
+    //    Identified by the world requiring the prompt-play narrative engine;
+    //    no new manifest field, no LLM, no interaction request.
+    const passthroughSession = await s.getSession(sessionId);
+    const passthroughWorld =
+      passthroughSession?.worldId && typeof s.getWorld === "function"
+        ? await s.getWorld(passthroughSession.worldId)
+        : undefined;
+    // The world manifest is stored as record metadata; the seed loader nests
+    // the manifest under its own keys — requiredPlugins lives inside
+    // pluginPolicy when declared there (check both to be shape-tolerant).
+    const passthroughPolicy = passthroughWorld?.metadata?.pluginPolicy;
+    const passthroughRequired =
+      passthroughPolicy?.requiredPlugins ??
+      passthroughWorld?.metadata?.requiredPlugins;
+    if (
+      Array.isArray(passthroughRequired) &&
+      passthroughRequired.includes("prompt-play-narrator")
+    ) {
+      await logger?.debug("player-init guard skipped for passthrough world", {
+        worldId: passthroughSession.worldId,
+      });
+      return {
+        skip: true,
+        passthrough: true,
+        narrativeOutput: "",
+        preGameDone: true,
+      };
+    }
+
     const characters = await s.listCharacters(sessionId);
     const player = Array.isArray(characters)
       ? characters.find((c) => c.type === "player")

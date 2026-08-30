@@ -292,6 +292,7 @@ export async function executeAgentRuntime({
     pendingProposals,
     emittedEvents,
     streamDeltaCount,
+    tokenUsage,
     stoppedWithResponse,
     effectiveMaxSteps,
     deadline,
@@ -441,6 +442,7 @@ export async function executeAgentRuntime({
     output,
     toolCalls: collectedToolCalls,
     durationMs: Date.now() - startTime,
+    tokenUsage,
     timestamp: new Date().toISOString(),
   };
 

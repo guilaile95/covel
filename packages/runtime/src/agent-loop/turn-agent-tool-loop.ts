@@ -51,6 +51,7 @@ export interface AgentToolLoopCompleted {
   /** Domain events emitted via `emit-event` tool calls this loop — merged into `output.events` at finalize. */
   readonly emittedEvents: EmittedEvent[];
   readonly streamDeltaCount: number;
+  readonly tokenUsage: { readonly input: number; readonly output: number };
   readonly stoppedWithResponse: boolean;
   readonly effectiveMaxSteps: number;
   readonly deadline: number;
@@ -153,6 +154,7 @@ export async function runAgentToolLoop({
   // dies with "timed out while waiting for final output".
   let deadline = Date.now() + timeoutMs;
   let stoppedWithResponse = false;
+  const tokenUsage = { input: 0, output: 0 };
 
   // All HOW-to-run decisions (tool surface, response format, model override,
   // streaming gate, step/retry budgets) live in the policy module — the loop
@@ -275,6 +277,8 @@ export async function runAgentToolLoop({
       reportRetry,
       onStreamDelta: delta.forward,
     });
+    tokenUsage.input += response.usage.inputTokens;
+    tokenUsage.output += response.usage.outputTokens;
 
     // ── PostLLMResponse hook ─────────────────────────────────────
     // Inspect / patch the response (content, toolCalls) before tool dispatch.
@@ -726,6 +730,7 @@ export async function runAgentToolLoop({
     pendingProposals,
     emittedEvents,
     streamDeltaCount: delta.count(),
+    tokenUsage,
     stoppedWithResponse,
     effectiveMaxSteps,
     deadline,

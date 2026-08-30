@@ -155,7 +155,12 @@ export function createBootstrapMemorySystem({
           })),
         ],
       });
-      return { content: response.content ?? "" };
+      // Dongfang Gate A: forward provider usage so the post-turn memory
+      // trace row can account for the memory updater's LLM cost.
+      return {
+        content: response.content ?? "",
+        usage: response.usage,
+      };
     },
   };
 

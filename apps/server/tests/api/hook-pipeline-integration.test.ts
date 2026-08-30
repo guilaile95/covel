@@ -166,6 +166,35 @@ describe("POST /api/actions — hook pipeline wired through commit chain", () =>
     app.route("/api/actions", actionRoutes);
   });
 
+  it("invokes a PreSchedule hook on the player action path", async () => {
+    const seenRuntimeIds: string[][] = [];
+    hookPipeline.register({
+      id: "test:PreSchedule:0",
+      event: "PreSchedule",
+      handler: async (_ctx, payload) => {
+        const triggered = (payload as { triggered: Array<{ name?: string }> })
+          .triggered;
+        seenRuntimeIds.push(triggered.map((runtime) => runtime.name ?? ""));
+        return { action: "continue" };
+      },
+    });
+
+    const res = await app.request("/api/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: "req-pre-schedule",
+        type: "send_message",
+        sessionId,
+        payload: { content: "schedule test" },
+      }),
+    });
+    expect(res.status).toBe(200);
+    await drainActionStream(res);
+
+    expect(seenRuntimeIds).toContainEqual([RUNTIME_ID]);
+  });
+
   it("invokes a PreStateCommit hook on every normalized proposal", async () => {
     const seen: Array<{ type: string; content?: string }> = [];
     hookPipeline.register({

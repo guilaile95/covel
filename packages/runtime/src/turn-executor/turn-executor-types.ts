@@ -196,6 +196,11 @@ export interface TurnExecutorDeps extends AgentLoopDeps {
         updated: boolean;
         blocksChanged: readonly string[];
         error?: string;
+        /** Gate instrumentation: aggregate provider usage across this update's
+         *  LLM completion(s) when the backing adapter reports it. */
+        usage?: { readonly inputTokens: number; readonly outputTokens: number };
+        /** Gate instrumentation: LLM completions attempted (normally 1). */
+        llmCalls?: number;
       }>;
       /** Optional — await any pending updateAfterTurn for the session. */
       awaitPending?(sessionId: string): Promise<void>;

@@ -582,6 +582,7 @@ actionRoutes.post("/", rateLimiter({ max: 30 }), async (c) => {
           releaseTurnControl = registeredTurn.release;
           let result;
           try {
+            const turnHookPipeline = c.get("hookPipeline");
             result = await executeTurn(turnInput, activeRuntimes, {
               loadRuntime: loadRuntimeFn,
               llm: llmAdapter,
@@ -656,6 +657,7 @@ actionRoutes.post("/", rateLimiter({ max: 30 }), async (c) => {
                   }
                 : {}),
               ...(memorySystem ? { memorySystem } : {}),
+              ...(turnHookPipeline ? { hookPipeline: turnHookPipeline } : {}),
               // Let the turn executor construct a unified SessionContextSnapshot.
               capabilityPluginIds,
               ...(eventDirectory ? { eventDirectory } : {}),

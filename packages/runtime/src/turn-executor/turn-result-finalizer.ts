@@ -82,6 +82,7 @@ async function persistTurnResult(
       output: rr.output,
       toolCalls: rr.toolCalls,
       durationMs: rr.durationMs,
+      tokenUsage: rr.tokenUsage,
       error: rr.error,
       createdAt: rr.timestamp ?? now,
     });

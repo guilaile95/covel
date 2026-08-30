@@ -592,7 +592,16 @@ export async function bootstrapApi(
     c.set("hookPipeline", hookPipeline);
     c.set("eventDirectory", eventDirectory);
     if (bootstrapMemory) {
-      c.set("memorySystem", bootstrapMemory.memorySystem);
+      // Dongfang Gate A spike: COVEL_MEMORY_UPDATES=off detaches the memory
+      // system entirely — core-memory blocks resolve to empty (no section-2
+      // injection) and post-turn memory rewriting is skipped (no extra LLM
+      // call per turn). Save/resume does not depend on the memory system.
+      const memoryUpdatesDisabled =
+        process.env.COVEL_MEMORY_UPDATES === "off";
+      c.set(
+        "memorySystem",
+        memoryUpdatesDisabled ? undefined : bootstrapMemory.memorySystem,
+      );
     }
     c.set("rpcExecutor", rpcExecutor);
     c.set("rpcRegistry", rpcRegistry);
