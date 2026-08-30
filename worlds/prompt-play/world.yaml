@@ -1,0 +1,57 @@
+schemaVersion: "1.0"
+id: prompt-play
+name:
+  zh-CN: 直玩（提示词透传）
+  en-US: Prompt Play (Passthrough)
+version: "0.1.0"
+summary:
+  zh-CN: 把一份现成文游 Prompt 原样直接交给模型主持：不抽取、不改写、不摘要，框架只保留叙事本体与存档恢复。
+  en-US: Hands a ready-to-play text prompt verbatim to the model — no extraction, rewriting, or summarizing; the framework keeps only the narrative engine and save/resume.
+defaultLocale: zh-CN
+tags:
+  - prompt-play
+  - passthrough
+pluginPolicy:
+  requiredPlugins:
+    - prompt-play-narrator
+    - prompt-play-lite
+  recommendedPlugins: []
+  excludedPlugins:
+    - guide
+    - codex
+    - npc-graph
+    - living-world-rules
+    - character-blueprint
+    - character-presence
+    - core-quest
+    - inventory
+    - affinity
+    - dice-check
+    - scene-cast
+    - scene-prompts
+    - scene-stage
+    - branch-reply
+    - director
+    - story-guard
+    - mimo-tts
+    - dashscope-image-gen
+    - openai-image-gen
+    - cost-gate
+# 最小角色属性表：命中 world-init/schema-gen 的声明直写路径（零 LLM）。
+# 创角流程由透传 Prompt 本身主持，不使用 covel 创角表单。
+characterAttributes:
+  - id: name
+    name: { zh-CN: 姓名, en-US: Name }
+    type: string
+    category: bio
+    description:
+      zh-CN: 角色姓名（由 Prompt 内的创角流程决定）。
+      en-US: Character name (decided by the prompt's own creation flow).
+  - id: background
+    name: { zh-CN: 背景, en-US: Background }
+    type: string
+    category: bio
+    description:
+      zh-CN: 出身与当前处境（随剧情由 Prompt 主持更新）。
+      en-US: Origin and current situation (updated by the prompt as play proceeds).
+defaultViewMode: parsed
