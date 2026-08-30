@@ -6,10 +6,16 @@ import { request } from "./request.js";
  */
 
 export interface ImportJobView {
-  id: string;
-  status: "running" | "done" | "error";
-  stage: "parsing" | "extracting";
-  chunksDone: number;
+  jobId: string;
+  status:
+    | "queued"
+    | "extracting"
+    | "merging"
+    | "materializing"
+    | "completed"
+    | "failed";
+  stage: ImportJobView["status"];
+  processedChunks: number;
   chunksTotal: number;
   error?: string;
   draft?: unknown;
@@ -65,18 +71,19 @@ export async function getWorldImportJob(jobId: string): Promise<ImportJobView> {
 }
 
 /**
- * Approve + export. The server contract-validates the draft, enforces the
- * no-unresolved-conflicts gate, generates the Covel World Package, checks
- * it with the Covel world loader and upserts the world.
+ * Approve + export. The draft itself carries the owner's canonical
+ * decision flags (aiAccepted / conflictResolved); the server re-validates
+ * the contract, enforces the no-unresolved-conflicts gate, generates the
+ * Covel World Package, checks it with the Covel world loader and upserts
+ * the world.
  */
 export async function exportApprovedWorld(
   draft: unknown,
-  resolvedConflictIds: string[],
 ): Promise<ExportWorldResponse> {
   try {
     return await request<ExportWorldResponse>("/api/world-import/export", {
       method: "POST",
-      body: JSON.stringify({ draft, resolvedConflictIds }),
+      body: JSON.stringify({ draft }),
       headers: { "content-type": "application/json" },
       silentErrors: true,
     });

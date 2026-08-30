@@ -1373,7 +1373,7 @@
       "needTitle": "请先输入世界名称。",
       "needFiles": "请至少选择一个来源文件。",
       "failed": "导入失败。",
-      "fakeHint": "当前为演示抽取:确定性 Fake 规则,不调用模型。"
+      "modelHint": "抽取将使用当前已配置的模型。"
     },
     "progress": {
       "parsing": "解析文件中…",
@@ -1428,7 +1428,8 @@
       "notes": "冲突说明",
       "markResolved": "标记冲突已解决",
       "unmark": "取消解决标记",
-      "resolved": "已解决"
+      "resolved": "已解决",
+      "noNotes": "暂无冲突说明"
     },
     "ai": {
       "title": "AI 推断处理",

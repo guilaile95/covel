@@ -1373,7 +1373,7 @@
       "needTitle": "Enter a world name first.",
       "needFiles": "Select at least one source file.",
       "failed": "Import failed.",
-      "fakeHint": "Demo extraction for now: deterministic fake rules, no model calls."
+      "modelHint": "Extraction uses the currently configured model."
     },
     "progress": {
       "parsing": "Parsing files…",
@@ -1428,7 +1428,8 @@
       "notes": "Conflict notes",
       "markResolved": "Mark conflict resolved",
       "unmark": "Unmark resolution",
-      "resolved": "Resolved"
+      "resolved": "Resolved",
+      "noNotes": "No conflict notes"
     },
     "ai": {
       "title": "AI inference",

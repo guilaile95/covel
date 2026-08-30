@@ -45,19 +45,19 @@ export function ImportWizard({ onImported }: ImportWizardProps) {
         const next = await getWorldImportJob(jobId);
         if (stopped) return;
         setJob(next);
-        if (next.status === "running") return;
-        if (next.status === "error") {
+        if (next.status === "failed") {
           setError(next.error ?? t("worldImport.wizard.failed"));
           return;
         }
-        // done — hand the contract-validated draft to the review phase once.
+        if (next.status !== "completed" || next.draft === undefined) return;
+        // Hand the contract-validated completed draft to Review once.
         if (!adoptedRef.current) {
-          adoptedRef.current = true;
           const parsed = parseDraft(next.draft);
           if (!parsed.ok) {
             setError(parsed.error);
             return;
           }
+          adoptedRef.current = true;
           onImported(parsed.draft);
         }
       } catch (err) {
@@ -91,7 +91,8 @@ export function ImportWizard({ onImported }: ImportWizardProps) {
     }
   };
 
-  const running = job?.status === "running";
+  const running =
+    job !== null && job.status !== "completed" && job.status !== "failed";
 
   return (
     <div className="max-w-2xl mx-auto w-full">
@@ -186,20 +187,20 @@ export function ImportWizard({ onImported }: ImportWizardProps) {
             >
               <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
               <div className="text-sm">
-                {job.stage === "parsing"
+                {job.stage === "queued"
                   ? t("worldImport.progress.parsing")
                   : t("worldImport.progress.extracting", {
-                      done: job.chunksDone,
-                      total: Math.max(job.chunksTotal, job.chunksDone),
+                      done: job.processedChunks,
+                      total: Math.max(job.chunksTotal, job.processedChunks),
                     })}
               </div>
-              {job.stage !== "parsing" && job.chunksTotal > 0 && (
+              {job.stage !== "queued" && job.chunksTotal > 0 && (
                 <div className="ml-auto flex items-center gap-2 min-w-24">
                   <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
                     <div
                       className="h-full bg-(--accent-primary) rounded-full transition-all"
                       style={{
-                        width: `${Math.min(100, Math.round((job.chunksDone / Math.max(job.chunksTotal, 1)) * 100))}%`,
+                        width: `${Math.min(100, Math.round((job.processedChunks / Math.max(job.chunksTotal, 1)) * 100))}%`,
                       }}
                     />
                   </div>
@@ -208,7 +209,7 @@ export function ImportWizard({ onImported }: ImportWizardProps) {
             </div>
           )}
 
-          {job?.status === "done" && !error && (
+          {job?.status === "completed" && !error && (
             <p className="text-sm text-primary" role="status">
               {t("worldImport.progress.done")}
             </p>
@@ -230,7 +231,7 @@ export function ImportWizard({ onImported }: ImportWizardProps) {
               {t("worldImport.wizard.start")}
             </Button>
             <p className="text-xs text-muted-foreground">
-              {t("worldImport.wizard.fakeHint")}
+              {t("worldImport.wizard.modelHint")}
             </p>
           </div>
         </div>

@@ -5,22 +5,23 @@ import { inputCls, textareaCls } from "@/components/world/editor-helpers.js";
 import { requestConfirm } from "@/lib/confirm-channel.js";
 import { cn } from "@/lib/utils.js";
 import {
+  entryReviewStatus,
   isAiAccepted,
   isConflictResolved,
   resolveSourceTitle,
   type EntryEditPatch,
-  type ReviewDecisions,
-  type WorldImportDraft,
   type DraftEntry,
+  type WorldImportDraft,
 } from "../model.js";
 import { ProvenanceBadge } from "./provenance-badge.js";
 import { ReviewStatusChip } from "./review-status-chip.js";
-import { entryReviewStatus } from "../model.js";
 
 /**
  * Right pane of the review page: the owner-facing editor for one entry.
  * Content edits funnel through onEdit (stamps userEdited via the shared
- * contract helper); AI accept and conflict resolution are decisions.
+ * contract helper); AI accept and conflict resolution write canonical
+ * decision flags through the hook. Conflict notes are a machine-generated
+ * resolution fingerprint in v0 — read-only here by contract.
  */
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -127,18 +128,14 @@ function SourceRefsSection({
 
 function ConflictSection({
   entry,
-  decisions,
-  onEdit,
   onResolveConflict,
 }: {
   entry: DraftEntry;
-  decisions: ReviewDecisions;
-  onEdit: (entryId: string, patch: EntryEditPatch) => void;
-  onResolveConflict: (entryId: string, resolved: boolean) => void;
+  onResolveConflict: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   if (entry.provenanceStatus !== "conflict") return null;
-  const resolved = isConflictResolved(entry, decisions);
+  const resolved = isConflictResolved(entry);
   return (
     <section className="border border-destructive/40 bg-destructive/5 rounded-(--radius-control) p-3">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -152,45 +149,39 @@ function ConflictSection({
           </span>
         )}
       </div>
+      {/* Machine-generated resolution fingerprint — read-only by contract. */}
       <FieldLabel>{t("worldImport.conflict.notes")}</FieldLabel>
-      <textarea
-        className={cn(textareaCls, "min-h-16")}
-        value={entry.conflictNotes ?? ""}
-        aria-label={t("worldImport.conflict.notes")}
-        onChange={(event) =>
-          onEdit(entry.id, { conflictNotes: event.target.value })
-        }
-      />
-      <div className="mt-2">
-        <Button
-          type="button"
-          variant={resolved ? "secondary" : "outline"}
-          size="sm"
-          onClick={() => onResolveConflict(entry.id, !resolved)}
-        >
-          {resolved
-            ? t("worldImport.conflict.unmark")
-            : t("worldImport.conflict.markResolved")}
-        </Button>
-      </div>
+      <p className="text-xs text-muted-foreground leading-relaxed border border-border/70 bg-background rounded-(--radius-control) px-3 py-2.5 whitespace-pre-wrap">
+        {entry.conflictNotes || t("worldImport.conflict.noNotes")}
+      </p>
+      {!resolved && (
+        <div className="mt-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onResolveConflict(entry.id)}
+          >
+            {t("worldImport.conflict.markResolved")}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
 
 function AiInferenceSection({
   entry,
-  decisions,
   onAcceptAi,
   onRemoveEntry,
 }: {
   entry: DraftEntry;
-  decisions: ReviewDecisions;
   onAcceptAi: (entryId: string) => void;
   onRemoveEntry: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   if (entry.provenanceStatus !== "ai-inferred") return null;
-  const accepted = isAiAccepted(entry, decisions);
+  const accepted = isAiAccepted(entry);
   const handleDelete = async () => {
     const approved = await requestConfirm({
       title: t("worldImport.ai.deleteConfirmTitle"),
@@ -240,17 +231,15 @@ function AiInferenceSection({
 export interface EntryDetailPanelProps {
   draft: WorldImportDraft;
   entry: DraftEntry | null;
-  decisions: ReviewDecisions;
   onEdit: (entryId: string, patch: EntryEditPatch) => void;
   onAcceptAi: (entryId: string) => void;
   onRemoveEntry: (entryId: string) => void;
-  onResolveConflict: (entryId: string, resolved: boolean) => void;
+  onResolveConflict: (entryId: string) => void;
 }
 
 export function EntryDetailPanel({
   draft,
   entry,
-  decisions,
   onEdit,
   onAcceptAi,
   onRemoveEntry,
@@ -279,22 +268,16 @@ export function EntryDetailPanel({
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <ProvenanceBadge status={entry.provenanceStatus} />
-          <ReviewStatusChip status={entryReviewStatus(entry, decisions)} />
+          <ReviewStatusChip status={entryReviewStatus(entry)} />
         </div>
       </header>
 
       <AiInferenceSection
         entry={entry}
-        decisions={decisions}
         onAcceptAi={onAcceptAi}
         onRemoveEntry={onRemoveEntry}
       />
-      <ConflictSection
-        entry={entry}
-        decisions={decisions}
-        onEdit={onEdit}
-        onResolveConflict={onResolveConflict}
-      />
+      <ConflictSection entry={entry} onResolveConflict={onResolveConflict} />
 
       <div>
         <FieldLabel>{t("worldImport.detail.name")}</FieldLabel>

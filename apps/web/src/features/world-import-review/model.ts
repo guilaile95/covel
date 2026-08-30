@@ -1,11 +1,11 @@
 /**
- * Review-domain model over the frozen WorldImportDraft v0 contract.
+ * Review-domain view over the canonical WorldImportDraft.
  *
- * The contract itself lives in @covel/world-import (B's package) — this
- * module adds NO schema of its own. Owner review decisions (accept an AI
- * inference / mark a conflict resolved) are UI-layer state kept beside the
- * draft as id lists; they must survive save/reopen but are not part of the
- * frozen contract.
+ * The contract, its decision flags (`aiAccepted` / `conflictResolved`) and
+ * the decision mutations (`markAiAccepted` / `markConflictResolved`) all
+ * live in @covel/world-import/contract — B's package. This module adds NO
+ * schema and NO second decision state: the draft itself is the single
+ * source of review truth.
  */
 
 import {
@@ -16,8 +16,10 @@ import {
 } from "@covel/world-import/contract";
 import type {
   DraftEntry,
+  DraftSource,
   EntryType,
   ProvenanceStatus,
+  SourceRef,
   WorldImportDraft,
 } from "@covel/world-import/contract";
 
@@ -33,6 +35,8 @@ export {
   DRAFT_VERSION,
   ENTRY_TYPES,
   PROVENANCE_STATUSES,
+  markAiAccepted,
+  markConflictResolved,
 } from "@covel/world-import/contract";
 
 export function findEntry(
@@ -41,31 +45,6 @@ export function findEntry(
 ): DraftEntry | null {
   if (!entryId) return null;
   return draft.entries.find((entry) => entry.id === entryId) ?? null;
-}
-
-/** Owner decisions that must persist, keyed by entry id. */
-export interface ReviewDecisions {
-  /** Entry ids the owner explicitly accepted from the AI extraction. */
-  acceptedAi: string[];
-  /** Conflict entry ids the owner marked as resolved. */
-  resolvedConflicts: string[];
-}
-
-export const EMPTY_DECISIONS: ReviewDecisions = {
-  acceptedAi: [],
-  resolvedConflicts: [],
-};
-
-export function normalizeDecisions(input: unknown): ReviewDecisions {
-  const raw = (input ?? {}) as Partial<ReviewDecisions>;
-  const stringIds = (value: unknown): string[] =>
-    Array.isArray(value)
-      ? value.filter((v): v is string => typeof v === "string")
-      : [];
-  return {
-    acceptedAi: stringIds(raw.acceptedAi),
-    resolvedConflicts: stringIds(raw.resolvedConflicts),
-  };
 }
 
 /** Parse + validate any external draft against the frozen contract. */
@@ -82,11 +61,13 @@ export function parseDraft(
   }
 }
 
-/** Content edits by the owner (name / aliases / content / conflict notes). */
-export type EntryEditPatch = Pick<
-  UserEditPatch,
-  "name" | "aliases" | "content" | "conflictNotes"
->;
+/**
+ * Content edits by the owner. `conflictNotes` is intentionally NOT here:
+ * v0 conflict notes are a machine-generated resolution fingerprint, shown
+ * read-only in the UI; the resolve action writes through
+ * markConflictResolved instead.
+ */
+export type EntryEditPatch = Pick<UserEditPatch, "name" | "aliases" | "content">;
 
 export function updateEntry(
   draft: WorldImportDraft,
@@ -106,64 +87,35 @@ export function deleteEntry(
   };
 }
 
-/** Decision lists without an entry that no longer exists. */
-export function decisionsWithout(
-  decisions: ReviewDecisions,
-  entryId: string,
-): ReviewDecisions {
-  return {
-    acceptedAi: decisions.acceptedAi.filter((id) => id !== entryId),
-    resolvedConflicts: decisions.resolvedConflicts.filter(
-      (id) => id !== entryId,
-    ),
-  };
+export function isAiAccepted(entry: DraftEntry): boolean {
+  return entry.aiAccepted === true;
 }
 
-export function isAiAccepted(
-  entry: DraftEntry,
-  decisions: ReviewDecisions,
-): boolean {
-  return decisions.acceptedAi.includes(entry.id);
-}
-
-export function isConflictResolved(
-  entry: DraftEntry,
-  decisions: ReviewDecisions,
-): boolean {
-  return decisions.resolvedConflicts.includes(entry.id);
+export function isConflictResolved(entry: DraftEntry): boolean {
+  return entry.conflictResolved === true;
 }
 
 /** Owner decision still open: an unaccepted AI inference or an unresolved conflict. */
-export function isPending(
-  entry: DraftEntry,
-  decisions: ReviewDecisions,
-): boolean {
-  if (entry.provenanceStatus === "ai-inferred")
-    return !isAiAccepted(entry, decisions);
+export function isPending(entry: DraftEntry): boolean {
+  if (entry.provenanceStatus === "ai-inferred") return !isAiAccepted(entry);
   if (entry.provenanceStatus === "conflict") {
-    return !isConflictResolved(entry, decisions);
+    return !isConflictResolved(entry);
   }
   return false;
 }
 
 /** One deterministic completion state per entry, for the list and the summary. */
 export type EntryReviewStatus =
-  "unreviewed" | "edited" | "ai-accepted" | "conflict-resolved";
+  | "unreviewed"
+  | "edited"
+  | "ai-accepted"
+  | "conflict-resolved";
 
-export function entryReviewStatus(
-  entry: DraftEntry,
-  decisions: ReviewDecisions,
-): EntryReviewStatus {
-  if (
-    entry.provenanceStatus === "conflict" &&
-    isConflictResolved(entry, decisions)
-  ) {
+export function entryReviewStatus(entry: DraftEntry): EntryReviewStatus {
+  if (entry.provenanceStatus === "conflict" && isConflictResolved(entry)) {
     return "conflict-resolved";
   }
-  if (
-    entry.provenanceStatus === "ai-inferred" &&
-    isAiAccepted(entry, decisions)
-  ) {
+  if (entry.provenanceStatus === "ai-inferred" && isAiAccepted(entry)) {
     return "ai-accepted";
   }
   if (entry.userEdited === true) return "edited";
@@ -180,10 +132,7 @@ export interface ReviewCounts {
   pending: number;
 }
 
-export function reviewCounts(
-  draft: WorldImportDraft,
-  decisions: ReviewDecisions,
-): ReviewCounts {
+export function reviewCounts(draft: WorldImportDraft): ReviewCounts {
   const counts: ReviewCounts = {
     total: draft.entries.length,
     sourceBacked: 0,
@@ -198,18 +147,15 @@ export function reviewCounts(
     if (entry.provenanceStatus === "ai-inferred") counts.aiInferred += 1;
     if (entry.provenanceStatus === "conflict") {
       counts.conflict += 1;
-      if (!isConflictResolved(entry, decisions))
-        counts.unresolvedConflicts += 1;
+      if (!isConflictResolved(entry)) counts.unresolvedConflicts += 1;
     }
     if (entry.userEdited === true) counts.userEdited += 1;
-    if (isPending(entry, decisions)) counts.pending += 1;
+    if (isPending(entry)) counts.pending += 1;
   }
   return counts;
 }
 
-export function countByType(
-  draft: WorldImportDraft,
-): Record<EntryType, number> {
+export function countByType(draft: WorldImportDraft): Record<EntryType, number> {
   const counts = {
     character: 0,
     faction: 0,
@@ -231,13 +177,11 @@ export type StatusFilter = "all" | "pending" | "ai-inferred" | "conflict";
 
 export function filterEntries(
   draft: WorldImportDraft,
-  decisions: ReviewDecisions,
   filter: { type: EntryType | null; status: StatusFilter },
 ): DraftEntry[] {
   return draft.entries.filter((entry) => {
     if (filter.type && entry.type !== filter.type) return false;
-    if (filter.status === "pending" && !isPending(entry, decisions))
-      return false;
+    if (filter.status === "pending" && !isPending(entry)) return false;
     if (
       filter.status === "ai-inferred" &&
       entry.provenanceStatus !== "ai-inferred"
@@ -255,14 +199,6 @@ export function resolveSourceTitle(
   draft: WorldImportDraft,
   sourceId: string,
 ): string {
-  return (
-    draft.sources.find((source) => source.id === sourceId)?.title ?? sourceId
-  );
-}
-
-export function decisionsKey(
-  draft: WorldImportDraft,
-  decisions: ReviewDecisions,
-): string {
-  return JSON.stringify({ id: draft.id, draft, decisions });
+  const source = draft.sources.find((s) => s.id === sourceId);
+  return source?.title ?? source?.file ?? sourceId;
 }

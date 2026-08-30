@@ -2,17 +2,23 @@
  * Approve-side handler: draft → Covel World Package → loader validation →
  * world upsert. Errors are reported verbatim to the UI — a failed loader
  * check must surface as a failure, never as a fake success.
+ *
+ * The approval gate reads the CANONICAL draft only: a conflict entry is
+ * approved when the owner has written `conflictResolved` through
+ * markConflictResolved(). There is no separate decision payload.
  */
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import {
   exportCovelWorldPackage,
+  type ExportedPackageSummary,
+} from "@covel/world-import";
+import {
   loadDraft,
   DraftContractError,
-  type ExportedPackageSummary,
   type WorldImportDraft,
-} from "@covel/world-import";
+} from "@covel/world-import/contract";
 import { loadSingleWorld } from "../../../world-seed-loader.js";
 import type { WorldRecord } from "@covel/store";
 
@@ -29,7 +35,6 @@ export type ExportOutcome =
 
 export async function handleExportRequest(options: {
   draft: unknown;
-  resolvedConflictIds: string[];
   targetRoot: string;
   upsertWorld: (record: WorldRecord) => Promise<void>;
 }): Promise<ExportOutcome> {
@@ -46,12 +51,11 @@ export async function handleExportRequest(options: {
     return { ok: false, error: { status: 400, message } };
   }
 
-  // 2) Approval gate: every conflict entry must be marked resolved by the
-  //    review UI (decision state is client-owned, passed explicitly).
+  // 2) Approval gate on canonical decision fields.
   const unresolved = draft.entries.filter(
     (entry) =>
       entry.provenanceStatus === "conflict" &&
-      !options.resolvedConflictIds.includes(entry.id),
+      entry.conflictResolved !== true,
   );
   if (unresolved.length > 0) {
     return {

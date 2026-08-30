@@ -1,37 +1,66 @@
 /**
- * World Import API — server-side seam for the review UI.
+ * World Import API — thin HTTP surface over @covel/world-import.
  *
- * Owns: multipart intake → @covel/world-import pipeline (async job +
- * polling), and approved-draft export → Covel World Package → loader
- * validation → world upsert. It deliberately adds no extraction logic of
- * its own; the (fake today, Provider tomorrow) adapter comes from the
- * world-import package.
+ * - POST /import  → multipart intake → B's Job Core (createImportJob +
+ *   runImportJob). Production adapter: B's LlmExtractionAdapter bound to
+ *   the server's canonical LLMAdapter (existing model config; the model
+ *   field is a Covel slot name).
+ * - GET /jobs/:id → getImportProgress + the completed result.
+ * - POST /jobs/:id/resume → resumeImportJob (continue from checkpoint).
+ * - POST /export  → canonical-draft approval gate → exportCovelWorldPackage
+ *   → Covel world loader → store upsert.
+ *
+ * This module adds no extraction, merge, job-status or export logic of its
+ * own; it only adapts HTTP to the package and keeps the id → job registry.
  */
 
 import path from "node:path";
 import { Hono } from "hono";
+import {
+  getImportProgress,
+  type ExtractionAdapter,
+  type ImportInput,
+  type ImportJobResult,
+} from "@covel/world-import";
+import type { LLMAdapter } from "@covel/runtime";
 import type { DataStore } from "@covel/store";
 import { errorBody } from "../../../api-error.js";
-import { createImportJobRunner, type ImportJob } from "./jobs.js";
+import {
+  WorldImportJobRegistry,
+  type ImportJobEntry,
+} from "./jobs.js";
+import { createLlmExtractionAdapter } from "./adapter.js";
 import { handleExportRequest } from "./export.js";
 
 export type WorldImportEnv = {
   Variables: {
     store: DataStore;
+    llmAdapter?: LLMAdapter;
     worldsDirs?: readonly string[];
   };
 };
 
-/** Total upload budget across all files of one import job. */
-const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024;
+export interface WorldImportRouteOptions {
+  /**
+   * Production: omitted → B's LlmExtractionAdapter on the server's
+   * llmAdapter (Covel gateway/model config). Tests inject a fake-backend
+   * adapter here; the fake never reaches a production route.
+   */
+  buildAdapter?: (options: { presetId?: string }) => ExtractionAdapter;
+  /** Hard upload budget across all files of one import job. */
+  maxTotalUploadBytes?: number;
+}
 
+const DEFAULT_MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".epub"]);
 
-export function createWorldImportRoutes(): Hono<WorldImportEnv> {
+export function createWorldImportRoutes(
+  options: WorldImportRouteOptions = {},
+): Hono<WorldImportEnv> {
   const routes = new Hono<WorldImportEnv>();
-  const runner = createImportJobRunner();
+  const registry = new WorldImportJobRegistry();
 
-  // Intake: multipart form (title + files) → async pipeline job.
+  // Intake: multipart form (title + files[+ model slot]) → async job.
   routes.post("/import", async (c) => {
     let form: FormData;
     try {
@@ -47,6 +76,11 @@ export function createWorldImportRoutes(): Hono<WorldImportEnv> {
     if (title.length === 0) {
       return c.json(errorBody("title is required"), 400);
     }
+    const presetIdRaw = form.get("model");
+    const presetId =
+      typeof presetIdRaw === "string" && presetIdRaw.trim().length > 0
+        ? presetIdRaw.trim()
+        : undefined;
 
     const files = form
       .getAll("files")
@@ -55,6 +89,8 @@ export function createWorldImportRoutes(): Hono<WorldImportEnv> {
       return c.json(errorBody("at least one source file is required"), 400);
     }
 
+    const maxTotal =
+      options.maxTotalUploadBytes ?? DEFAULT_MAX_TOTAL_UPLOAD_BYTES;
     let totalBytes = 0;
     for (const file of files) {
       const extension = path.extname(file.name).toLowerCase();
@@ -68,34 +104,52 @@ export function createWorldImportRoutes(): Hono<WorldImportEnv> {
       }
       totalBytes += file.size;
     }
-    if (totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+    if (totalBytes > maxTotal) {
       return c.json(
-        errorBody(`total upload size exceeds ${MAX_TOTAL_UPLOAD_BYTES} bytes`),
+        errorBody(`total upload size exceeds ${maxTotal} bytes`),
         400,
       );
     }
 
-    const inputs = await Promise.all(
+    const inputs: ImportInput[] = await Promise.all(
       files.map(async (file) => ({
         file: file.name,
         bytes: new Uint8Array(await file.arrayBuffer()),
       })),
     );
 
-    const job = runner.start({ title, inputs });
-    return c.json({ jobId: job.id }, 201);
+    const adapter =
+      options.buildAdapter?.({ presetId }) ??
+      buildProductionAdapter(c, presetId);
+
+    const entry = registry.start({ title, inputs, adapter });
+    return c.json({ jobId: entry.job.jobId }, 201);
   });
 
-  // Poll: job status / staged progress / result.
+  // Poll: B's progress snapshot + the completed draft/stats.
   routes.get("/jobs/:id", (c) => {
-    const job: ImportJob | undefined = runner.get(c.req.param("id"));
-    if (!job) {
+    const entry = registry.get(c.req.param("id"));
+    if (!entry) {
       return c.json(errorBody("unknown import job id"), 404);
     }
-    return c.json(job);
+    return c.json(serializeEntry(entry));
   });
 
-  // Approve: validated draft → Covel World Package → loader check → upsert.
+  // Resume a failed/partial job from its checkpoint.
+  routes.post("/jobs/:id/resume", async (c) => {
+    const entry = await registry.resume(c.req.param("id"));
+    if (!entry) {
+      return c.json(errorBody("unknown import job id"), 404);
+    }
+    return c.json(serializeEntry(entry));
+  });
+
+  routes.delete("/jobs", (c) => {
+    registry.clearFinished();
+    return c.json({ ok: true });
+  });
+
+  // Approve: canonical draft → Covel World Package → loader → upsert.
   routes.post("/export", async (c) => {
     const store = c.get("store");
     const worldsDirs = c.get("worldsDirs");
@@ -116,17 +170,9 @@ export function createWorldImportRoutes(): Hono<WorldImportEnv> {
       return c.json(errorBody("expected a JSON body"), 400);
     }
     const draft = (body as { draft?: unknown } | null)?.draft;
-    const resolvedConflictIds = Array.isArray(
-      (body as { resolvedConflictIds?: unknown } | null)?.resolvedConflictIds,
-    )
-      ? (body as { resolvedConflictIds: unknown[] }).resolvedConflictIds.filter(
-          (id): id is string => typeof id === "string",
-        )
-      : [];
 
     const outcome = await handleExportRequest({
       draft,
-      resolvedConflictIds,
       targetRoot,
       upsertWorld: (record) => store.upsertWorld(record),
     });
@@ -136,10 +182,39 @@ export function createWorldImportRoutes(): Hono<WorldImportEnv> {
     return c.json(errorBody(outcome.error.message), outcome.error.status);
   });
 
-  routes.delete("/jobs", (c) => {
-    runner.clearFinished();
-    return c.json({ ok: true });
-  });
-
   return routes;
+}
+
+function buildProductionAdapter(
+  c: { get: (key: "llmAdapter") => LLMAdapter | undefined },
+  presetId?: string,
+): ExtractionAdapter {
+  const llm = c.get("llmAdapter");
+  if (!llm) {
+    throw new Error(
+      "no LLM adapter configured on this server — cannot run extraction",
+    );
+  }
+  return createLlmExtractionAdapter(llm, presetId);
+}
+
+function serializeEntry(entry: ImportJobEntry) {
+  const progress = getImportProgress(entry.job);
+  const result: ImportJobResult | undefined = entry.result;
+  return {
+    jobId: progress.jobId,
+    title: entry.title,
+    status: progress.status,
+    stage: progress.status,
+    processedChunks: progress.processedChunks,
+    chunksTotal: progress.totalChunks,
+    error: progress.error,
+    usage: progress.usage,
+    ...(result
+      ? {
+          draft: result.draft,
+          stats: result.stats,
+        }
+      : {}),
+  };
 }

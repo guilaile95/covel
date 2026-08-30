@@ -6,7 +6,6 @@ import {
   entryReviewStatus,
   filterEntries,
   type EntryType,
-  type ReviewDecisions,
   type StatusFilter,
   type WorldImportDraft,
   type DraftEntry,
@@ -56,13 +55,11 @@ function FilterChip({
 
 function EntryListItem({
   entry,
-  decisions,
   selected,
   onSelect,
   typeLabel,
 }: {
   entry: DraftEntry;
-  decisions: ReviewDecisions;
   selected: boolean;
   onSelect: () => void;
   typeLabel: string;
@@ -92,7 +89,7 @@ function EntryListItem({
         <span className="border border-border/70 px-1.5 py-px rounded-(--radius-control)">
           {typeLabel}
         </span>
-        <ReviewStatusChip status={entryReviewStatus(entry, decisions)} />
+        <ReviewStatusChip status={entryReviewStatus(entry)} />
       </div>
     </button>
   );
@@ -107,7 +104,6 @@ const STATUS_FILTERS: StatusFilter[] = [
 
 export interface EntryListPanelProps {
   draft: WorldImportDraft;
-  decisions: ReviewDecisions;
   statusFilter: StatusFilter;
   onStatusFilterChange: (filter: StatusFilter) => void;
   activeType: EntryType | null;
@@ -118,7 +114,6 @@ export interface EntryListPanelProps {
 
 export function EntryListPanel({
   draft,
-  decisions,
   statusFilter,
   onStatusFilterChange,
   activeType,
@@ -128,7 +123,7 @@ export function EntryListPanel({
 }: EntryListPanelProps) {
   const { t } = useTranslation();
   const typeCounts = countByType(draft);
-  const visibleEntries = filterEntries(draft, decisions, {
+  const visibleEntries = filterEntries(draft, {
     type: activeType,
     status: statusFilter,
   });
@@ -173,7 +168,6 @@ export function EntryListPanel({
             <EntryListItem
               key={entry.id}
               entry={entry}
-              decisions={decisions}
               selected={entry.id === selectedEntryId}
               onSelect={() => onSelectEntry(entry.id)}
               typeLabel={t(`worldImport.category.${entry.type}`)}

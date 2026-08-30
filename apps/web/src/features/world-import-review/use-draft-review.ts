@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  decisionsWithout,
   deleteEntry,
-  EMPTY_DECISIONS,
-  isAiAccepted,
-  isConflictResolved,
+  findEntry,
+  markAiAccepted,
+  markConflictResolved,
+  parseDraft,
   updateEntry,
   type EntryEditPatch,
-  type ReviewDecisions,
   type WorldImportDraft,
 } from "./model.js";
 import { WorldImportDraftStore } from "./draft-store.js";
 
 /**
- * State owner for the review phase. There is no fixture fallback any more:
- * the review works on a draft that arrived through the import pipeline and
- * was saved locally. `empty` means nothing has been imported yet.
+ * State owner for the review phase. There is no fixture fallback: the
+ * review works on a draft that arrived through the import pipeline and was
+ * saved locally. `empty` means nothing has been imported yet.
+ *
+ * Owner decisions are written straight into the canonical draft via the
+ * contract helpers (markAiAccepted / markConflictResolved) — the draft is
+ * the single source of review truth.
  */
 
 export type ReviewLoadState =
@@ -27,7 +30,6 @@ export type ReviewLoadState =
 export interface DraftReview {
   readonly loadState: ReviewLoadState;
   readonly draft: WorldImportDraft | null;
-  readonly decisions: ReviewDecisions;
   readonly savedAt: string | null;
   readonly dirty: boolean;
   readonly saving: boolean;
@@ -35,7 +37,7 @@ export interface DraftReview {
   editEntry(entryId: string, patch: EntryEditPatch): void;
   acceptAi(entryId: string): void;
   removeEntry(entryId: string): void;
-  resolveConflict(entryId: string, resolved: boolean): void;
+  resolveConflict(entryId: string): void;
   save(): Promise<void>;
   discard(): Promise<void>;
   /** Adopt a contract-valid draft produced by the import pipeline. */
@@ -59,26 +61,17 @@ export function useDraftReview(
     status: "loading",
   });
   const [draft, setDraft] = useState<WorldImportDraft | null>(null);
-  const [decisions, setDecisions] = useState<ReviewDecisions>(EMPTY_DECISIONS);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
 
-  const currentRef = useRef<{
-    draft: WorldImportDraft | null;
-    decisions: ReviewDecisions;
-  }>({ draft: null, decisions: EMPTY_DECISIONS });
-  currentRef.current = { draft, decisions };
+  const draftRef = useRef<WorldImportDraft | null>(null);
+  draftRef.current = draft;
 
   const applyLoaded = useCallback(
-    (saved: {
-      savedAt: string;
-      draft: WorldImportDraft;
-      decisions: ReviewDecisions;
-    }) => {
+    (saved: { savedAt: string; draft: WorldImportDraft }) => {
       setDraft(saved.draft);
-      setDecisions(saved.decisions);
       setSavedAt(saved.savedAt);
       setDirty(false);
       setLoadState({ status: "ready" });
@@ -110,75 +103,53 @@ export function useDraftReview(
     };
   }, [store, applyLoaded]);
 
-  const mutate = useCallback(
-    (nextDraft: WorldImportDraft, nextDecisions: ReviewDecisions) => {
-      setDraft(nextDraft);
-      setDecisions(nextDecisions);
-      setDirty(true);
-    },
-    [],
-  );
+  const mutate = useCallback((next: WorldImportDraft) => {
+    setDraft(next);
+    setDirty(true);
+  }, []);
 
   const editEntry = useCallback(
     (entryId: string, patch: EntryEditPatch) => {
-      const current = currentRef.current;
-      if (!current.draft) return;
-      mutate(updateEntry(current.draft, entryId, patch), current.decisions);
+      const current = draftRef.current;
+      if (!current || !findEntry(current, entryId)) return;
+      mutate(updateEntry(current, entryId, patch));
     },
     [mutate],
   );
 
   const acceptAi = useCallback(
     (entryId: string) => {
-      const current = currentRef.current;
-      if (!current.draft) return;
-      const entry = current.draft.entries.find((e) => e.id === entryId);
-      if (!entry || entry.provenanceStatus !== "ai-inferred") return;
-      if (isAiAccepted(entry, current.decisions)) return;
-      mutate(current.draft, {
-        ...current.decisions,
-        acceptedAi: [...current.decisions.acceptedAi, entryId],
-      });
+      const current = draftRef.current;
+      if (!current || !findEntry(current, entryId)) return;
+      mutate(markAiAccepted(current, entryId));
     },
     [mutate],
   );
 
   const resolveConflict = useCallback(
-    (entryId: string, resolved: boolean) => {
-      const current = currentRef.current;
-      if (!current.draft) return;
-      const entry = current.draft.entries.find((e) => e.id === entryId);
-      if (!entry || entry.provenanceStatus !== "conflict") return;
-      if (isConflictResolved(entry, current.decisions) === resolved) return;
-      const next = resolved
-        ? [...current.decisions.resolvedConflicts, entryId]
-        : current.decisions.resolvedConflicts.filter((id) => id !== entryId);
-      mutate(current.draft, {
-        ...current.decisions,
-        resolvedConflicts: next,
-      });
+    (entryId: string) => {
+      const current = draftRef.current;
+      if (!current || !findEntry(current, entryId)) return;
+      mutate(markConflictResolved(current, entryId));
     },
     [mutate],
   );
 
   const removeEntry = useCallback(
     (entryId: string) => {
-      const current = currentRef.current;
-      if (!current.draft) return;
-      mutate(
-        deleteEntry(current.draft, entryId),
-        decisionsWithout(current.decisions, entryId),
-      );
+      const current = draftRef.current;
+      if (!current) return;
+      mutate(deleteEntry(current, entryId));
     },
     [mutate],
   );
 
   const save = useCallback(async () => {
-    const current = currentRef.current;
-    if (!current.draft) return;
+    const current = draftRef.current;
+    if (!current) return;
     setSaving(true);
     try {
-      const at = await store.save(current.draft, current.decisions);
+      const at = await store.save(current);
       setSavedAt(at);
       setDirty(false);
     } finally {
@@ -189,25 +160,20 @@ export function useDraftReview(
   const adopt = useCallback(
     async (adoptedDraft: WorldImportDraft) => {
       // Save immediately so a refresh right after import reopens the draft.
-      const at = await store.save(adoptedDraft, EMPTY_DECISIONS);
-      applyLoaded({
-        savedAt: at,
-        draft: adoptedDraft,
-        decisions: EMPTY_DECISIONS,
-      });
+      const at = await store.save(adoptedDraft);
+      applyLoaded({ savedAt: at, draft: adoptedDraft });
     },
     [store, applyLoaded],
   );
 
   const discard = useCallback(async () => {
-    const current = currentRef.current;
+    const current = draftRef.current;
     setDiscarding(true);
     try {
-      if (current.draft) {
-        await store.clear(current.draft.id);
+      if (current) {
+        await store.clear(current.id);
       }
       setDraft(null);
-      setDecisions(EMPTY_DECISIONS);
       setSavedAt(null);
       setDirty(false);
       setLoadState({ status: "empty" });
@@ -219,7 +185,6 @@ export function useDraftReview(
   const discardCorrupted = useCallback(async () => {
     await store.clearAll();
     setDraft(null);
-    setDecisions(EMPTY_DECISIONS);
     setSavedAt(null);
     setDirty(false);
     setLoadState({ status: "empty" });
@@ -228,7 +193,6 @@ export function useDraftReview(
   return {
     loadState,
     draft,
-    decisions,
     savedAt,
     dirty,
     saving,

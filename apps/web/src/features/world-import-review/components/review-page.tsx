@@ -89,7 +89,7 @@ function Workbench({ review }: { review: DraftReview }) {
 
   const draft = review.draft;
   if (!draft) return null;
-  const counts = reviewCounts(draft, review.decisions);
+  const counts = reviewCounts(draft);
   const selectedEntry = findEntry(draft, selectedEntryId);
 
   const handleDiscard = async () => {
@@ -109,10 +109,7 @@ function Workbench({ review }: { review: DraftReview }) {
     if (counts.unresolvedConflicts > 0) return;
     setApprove({ phase: "running" });
     try {
-      const result = await exportApprovedWorld(
-        draft,
-        review.decisions.resolvedConflicts,
-      );
+      const result = await exportApprovedWorld(draft);
       setApprove({
         phase: "success",
         worldId: result.world.id,
@@ -266,7 +263,6 @@ function Workbench({ review }: { review: DraftReview }) {
           <div className="lg:col-span-5 lg:sticky lg:top-4">
             <EntryListPanel
               draft={draft}
-              decisions={review.decisions}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               activeType={activeType}
@@ -279,7 +275,6 @@ function Workbench({ review }: { review: DraftReview }) {
             <EntryDetailPanel
               draft={draft}
               entry={selectedEntry}
-              decisions={review.decisions}
               onEdit={review.editEntry}
               onAcceptAi={review.acceptAi}
               onRemoveEntry={(entryId) => {

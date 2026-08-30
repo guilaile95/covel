@@ -62,20 +62,20 @@ describe("ImportWizard", () => {
     expect(screen.getByText("雾港旧事.txt")).toBeDefined();
 
     startWorldImportMock.mockResolvedValue({ jobId: "job-1" });
-    // One running poll, then done.
+    // One extracting poll, then B Job Core completion.
     getWorldImportJobMock
       .mockResolvedValueOnce({
-        id: "job-1",
-        status: "running",
+        jobId: "job-1",
+        status: "extracting",
         stage: "extracting",
-        chunksDone: 1,
+        processedChunks: 1,
         chunksTotal: 3,
       })
       .mockResolvedValue({
-        id: "job-1",
-        status: "done",
-        stage: "extracting",
-        chunksDone: 3,
+        jobId: "job-1",
+        status: "completed",
+        stage: "completed",
+        processedChunks: 3,
         chunksTotal: 3,
         draft,
       });
@@ -102,10 +102,10 @@ describe("ImportWizard", () => {
     ]);
     startWorldImportMock.mockResolvedValue({ jobId: "job-2" });
     getWorldImportJobMock.mockResolvedValue({
-      id: "job-2",
-      status: "error",
-      stage: "parsing",
-      chunksDone: 0,
+      jobId: "job-2",
+      status: "failed",
+      stage: "failed",
+      processedChunks: 0,
       chunksTotal: 0,
       error: "invalid epub: missing container.xml",
     });
