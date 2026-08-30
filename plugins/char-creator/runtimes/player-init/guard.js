@@ -36,9 +36,13 @@ export default async function guard(ctx) {
       passthroughSession?.worldId && typeof s.getWorld === "function"
         ? await s.getWorld(passthroughSession.worldId)
         : undefined;
-    const passthroughRequired = /** @type {unknown} */ (
-      passthroughWorld?.metadata?.requiredPlugins
-    );
+    // The world manifest is stored as record metadata; the seed loader nests
+    // the manifest under its own keys — requiredPlugins lives inside
+    // pluginPolicy when declared there (check both to be shape-tolerant).
+    const passthroughPolicy = passthroughWorld?.metadata?.pluginPolicy;
+    const passthroughRequired =
+      passthroughPolicy?.requiredPlugins ??
+      passthroughWorld?.metadata?.requiredPlugins;
     if (
       Array.isArray(passthroughRequired) &&
       passthroughRequired.includes("prompt-play-narrator")

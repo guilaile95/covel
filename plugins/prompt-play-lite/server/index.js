@@ -1,4 +1,20 @@
 /**
+ * Prompt Play Lite — entry module.
+ *
+ * Covel plugin-entry contract: the default export is an init factory that
+ * receives the `covel` API and registers lifecycle hooks on it. The handler
+ * itself is a named export so tests can call it directly.
+ */
+
+const PASSTHROUGH_NARRATOR_ID = "prompt-play-narrator";
+
+function runtimeId(manifest) {
+  return String(
+    manifest?.name ?? manifest?.id ?? manifest?.pluginId ?? "",
+  );
+}
+
+/**
  * PreSchedule — for passthrough (Prompt Play) sessions, keep only the story
  * runtime (prompt-play-narrator) in the main loop and drop every background
  * agent (character-tracker, guide, codex, npc-graph extractor, ...).
@@ -17,15 +33,7 @@
  * @param {{ triggered: ReadonlyArray<Record<string, unknown>> }} payload
  * @returns {Promise<{ action: "continue", replace?: { triggered: ReadonlyArray<unknown> } }>}
  */
-const PASSTHROUGH_NARRATOR_ID = "prompt-play-narrator";
-
-function runtimeId(manifest) {
-  return String(
-    manifest?.name ?? manifest?.id ?? manifest?.pluginId ?? "",
-  );
-}
-
-export default async function keepStoryOnly(ctx, payload) {
+export async function keepStoryOnly(ctx, payload) {
   const triggered = payload?.triggered ?? [];
   const isPassthroughTurn = triggered.some(
     (m) => runtimeId(m) === PASSTHROUGH_NARRATOR_ID,
@@ -39,4 +47,12 @@ export default async function keepStoryOnly(ctx, payload) {
   });
   if (kept.length === triggered.length) return { action: "continue" };
   return { action: "continue", replace: { triggered: kept } };
+}
+
+/**
+ * Plugin entry — register the PreSchedule hook on the covel API.
+ * @param {{ on: Function }} covel
+ */
+export default function register(covel) {
+  covel.on("PreSchedule", keepStoryOnly);
 }
