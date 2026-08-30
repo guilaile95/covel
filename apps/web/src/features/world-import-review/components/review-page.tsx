@@ -1,24 +1,47 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Download, RotateCcw, Save } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  CheckCircle2,
+  Download,
+  Loader2,
+  RotateCcw,
+  Save,
+  Stamp,
+} from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { requestConfirm } from "@/lib/confirm-channel.js";
-import { countByProvenance, findEntry } from "../draft-actions.js";
+import { useSession } from "@/stores/session-store.js";
+import { getWorld } from "@/services/api/worlds.js";
+import { exportApprovedWorld } from "@/services/api/world-import.js";
+import {
+  findEntry,
+  reviewCounts,
+  type EntryType,
+  type StatusFilter,
+} from "../model.js";
 import { downloadWorldImportDraft } from "../draft-service.js";
 import { WorldImportDraftStore } from "../draft-store.js";
+import type { DraftReview } from "../use-draft-review.js";
 import { useDraftReview } from "../use-draft-review.js";
-import type { EntryType } from "../types.js";
 import { EntryDetailPanel } from "./entry-detail-panel.js";
 import { EntryListPanel } from "./entry-list-panel.js";
+import { ImportWizard } from "./import-wizard.js";
 import { ProvenanceBadge } from "./provenance-badge.js";
 
 /**
- * World Import Review page — route /world-import-review.
+ * World Import page — route /world-import-review.
  *
- * The owner-facing gate between AI extraction (Dev B) and the approved
- * WorldImportDraft: inspect what was extracted, see what is source-backed
- * vs AI-inferred vs conflicting, edit, decide, save, export.
+ * Phases: no draft yet → import wizard (pick TXT/MD/EPUB → pipeline job →
+ * progress); draft ready → the review workbench; after approval → success
+ * banner handing over to the existing world-start path.
  */
+
+type ApproveState =
+  | { phase: "idle" }
+  | { phase: "running" }
+  | { phase: "success"; worldId: string; worldName: string }
+  | { phase: "error"; message: string };
 
 function StatChip({
   label,
@@ -27,7 +50,7 @@ function StatChip({
 }: {
   label: string;
   value: number;
-  emphasis?: "destructive";
+  emphasis?: "destructive" | "primary";
 }) {
   return (
     <div className="flex items-baseline gap-1.5">
@@ -35,7 +58,9 @@ function StatChip({
         className={
           emphasis === "destructive"
             ? "text-lg font-semibold text-destructive tabular-nums"
-            : "text-lg font-semibold tabular-nums"
+            : emphasis === "primary"
+              ? "text-lg font-semibold text-primary tabular-nums"
+              : "text-lg font-semibold tabular-nums"
         }
       >
         {value}
@@ -45,60 +70,78 @@ function StatChip({
   );
 }
 
-export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
+function LoadingView({ label }: { label: string }) {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <p className="text-sm text-muted-foreground animate-pulse">{label}</p>
+    </div>
+  );
+}
+
+function Workbench({ review }: { review: DraftReview }) {
   const { t } = useTranslation();
-  const review = useDraftReview(store);
+  const navigate = useNavigate();
+  const { addWorldLocal } = useSession();
   const [activeType, setActiveType] = useState<EntryType | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [approve, setApprove] = useState<ApproveState>({ phase: "idle" });
 
   const draft = review.draft;
-  const counts = draft ? countByProvenance(draft) : null;
-  const selectedEntry = draft ? findEntry(draft, selectedEntryId) : null;
+  if (!draft) return null;
+  const counts = reviewCounts(draft, review.decisions);
+  const selectedEntry = findEntry(draft, selectedEntryId);
 
-  const handleReset = async () => {
+  const handleDiscard = async () => {
     const approved = await requestConfirm({
-      title: t("worldImport.reset.confirmTitle"),
-      message: t("worldImport.reset.confirmMessage"),
-      confirmLabel: t("worldImport.reset.action"),
+      title: t("worldImport.discard.confirmTitle"),
+      message: t("worldImport.discard.confirmMessage"),
+      confirmLabel: t("worldImport.discard.action"),
       cancelLabel: t("common.cancel"),
     });
     if (!approved) return;
     setSelectedEntryId(null);
-    await review.resetToFixture();
+    setApprove({ phase: "idle" });
+    await review.discard();
   };
 
-  if (review.loadState.status === "loading") {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-sm text-muted-foreground animate-pulse">
-          {t("worldImport.status.loading")}
-        </p>
-      </div>
-    );
-  }
+  const handleApprove = async () => {
+    if (counts.unresolvedConflicts > 0) return;
+    setApprove({ phase: "running" });
+    try {
+      const result = await exportApprovedWorld(
+        draft,
+        review.decisions.resolvedConflicts,
+      );
+      setApprove({
+        phase: "success",
+        worldId: result.world.id,
+        worldName: result.world.name,
+      });
+    } catch (error) {
+      setApprove({
+        phase: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
-  if (review.loadState.status === "error" || !draft || !counts) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-destructive">
-          {review.loadState.status === "error"
-            ? review.loadState.message
-            : t("worldImport.status.error")}
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void review.reload()}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          {t("worldImport.status.retry")}
-        </Button>
-      </div>
-    );
-  }
+  const handleStartGame = async (worldId: string) => {
+    // Existing world-start path: pull the freshly generated world into the
+    // session store's world list (same ingestion as AI world creation) and
+    // hand over to the world-select → prep → start flow. No runtime code.
+    try {
+      const record = await getWorld(worldId);
+      addWorldLocal(record);
+    } catch {
+      // The world list will still pick it up on the next boot; navigating
+      // is strictly better than blocking on a refresh failure.
+    }
+    await navigate({ to: "/session", search: {} });
+  };
 
   return (
-    <div className="h-full w-full overflow-y-auto overscroll-contain">
+    <div className="w-full">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-10 py-5 md:py-8">
         <header className="mb-6">
           <p className="ui-eyebrow text-muted-foreground mb-2">
@@ -111,7 +154,9 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
               </h1>
               <p className="mt-1 text-xs text-muted-foreground font-mono">
                 {draft.id} ·{" "}
-                {t("worldImport.metaVersion", { version: draft.version })}
+                {t("worldImport.metaVersion", {
+                  version: String(draft.version),
+                })}
               </p>
             </div>
             <div className="flex items-center flex-wrap gap-2">
@@ -138,11 +183,11 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
                 variant="ghost"
                 size="sm"
                 className="text-destructive"
-                disabled={review.resetting}
-                onClick={() => void handleReset()}
+                disabled={review.discarding}
+                onClick={() => void handleDiscard()}
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                {t("worldImport.reset.action")}
+                {t("worldImport.discard.action")}
               </Button>
             </div>
           </div>
@@ -161,7 +206,7 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
                   className="h-1.5 w-1.5 rounded-full bg-(--accent-primary)"
                   aria-hidden
                 />
-                {source.title}
+                {source.file}
               </span>
             ))}
             <span className="text-xs text-muted-foreground">
@@ -196,15 +241,24 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
               counts.unresolvedConflicts > 0 ? "destructive" : undefined
             }
           />
+          <StatChip
+            label={t("worldImport.stats.userEdited")}
+            value={counts.userEdited}
+          />
+          <StatChip
+            label={t("worldImport.stats.pending")}
+            value={counts.pending}
+            emphasis={counts.pending > 0 ? "primary" : undefined}
+          />
           {counts.unresolvedConflicts > 0 && (
-            <ProvenanceBadge status="conflict" />
-          )}
-          {counts.unresolvedConflicts > 0 && (
-            <span className="text-xs text-destructive">
-              {t("worldImport.export.conflictWarning", {
-                count: counts.unresolvedConflicts,
-              })}
-            </span>
+            <>
+              <ProvenanceBadge status="conflict" />
+              <span className="text-xs text-destructive">
+                {t("worldImport.export.conflictWarning", {
+                  count: counts.unresolvedConflicts,
+                })}
+              </span>
+            </>
           )}
         </section>
 
@@ -212,16 +266,20 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
           <div className="lg:col-span-5 lg:sticky lg:top-4">
             <EntryListPanel
               draft={draft}
+              decisions={review.decisions}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
               activeType={activeType}
               onTypeChange={setActiveType}
               selectedEntryId={selectedEntryId}
               onSelectEntry={setSelectedEntryId}
             />
           </div>
-          <div className="lg:col-span-7">
+          <div className="lg:col-span-7 flex flex-col gap-6">
             <EntryDetailPanel
               draft={draft}
               entry={selectedEntry}
+              decisions={review.decisions}
               onEdit={review.editEntry}
               onAcceptAi={review.acceptAi}
               onRemoveEntry={(entryId) => {
@@ -230,9 +288,126 @@ export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
               }}
               onResolveConflict={review.resolveConflict}
             />
+
+            <section className="border border-border/70 rounded-(--radius-control) p-4">
+              <h3 className="ui-eyebrow mb-2 text-muted-foreground">
+                {t("worldImport.approve.title")}
+              </h3>
+              {approve.phase === "success" ? (
+                <div className="flex flex-col gap-2">
+                  <p className="inline-flex items-center gap-2 text-sm font-medium text-primary">
+                    <CheckCircle2 className="h-4 w-4" aria-hidden />
+                    {t("worldImport.approve.successTitle")}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {t("worldImport.approve.successBody", {
+                      name: approve.worldName,
+                    })}
+                  </p>
+                  <div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void handleStartGame(approve.worldId)}
+                    >
+                      {t("worldImport.approve.startGame")}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        counts.unresolvedConflicts > 0 ||
+                        approve.phase === "running"
+                      }
+                      onClick={() => void handleApprove()}
+                    >
+                      {approve.phase === "running" ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 animate-spin"
+                          aria-hidden
+                        />
+                      ) : (
+                        <Stamp className="h-3.5 w-3.5" />
+                      )}
+                      {t("worldImport.approve.action")}
+                    </Button>
+                    {counts.unresolvedConflicts > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {t("worldImport.approve.blockedHint", {
+                          count: counts.unresolvedConflicts,
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  {approve.phase === "error" && (
+                    <p
+                      className="text-sm text-destructive wrap-break-word"
+                      role="alert"
+                    >
+                      {t("worldImport.approve.failedTitle")}: {approve.message}
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+export function ReviewPage({ store }: { store?: WorldImportDraftStore }) {
+  const { t } = useTranslation();
+  const review = useDraftReview(store);
+
+  if (review.loadState.status === "loading") {
+    return <LoadingView label={t("worldImport.status.loading")} />;
+  }
+  if (review.loadState.status === "empty") {
+    return (
+      <div className="h-full w-full overflow-y-auto overscroll-contain">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-10 py-8">
+          <p className="ui-eyebrow text-muted-foreground mb-4">
+            {t("worldImport.eyebrow")}
+          </p>
+          <ImportWizard
+            onImported={(imported) => void review.adopt(imported)}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (review.loadState.status === "error") {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-sm text-destructive wrap-break-word max-w-xl">
+          {review.loadState.message}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void review.discardCorrupted()}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("worldImport.status.resetLocal")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => window.location.reload()}
+          >
+            {t("worldImport.status.retry")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return <Workbench review={review} />;
 }

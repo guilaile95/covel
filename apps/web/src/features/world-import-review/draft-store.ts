@@ -1,11 +1,16 @@
 import Dexie, { type Table } from "dexie";
-import { parseWorldImportDraft, type WorldImportDraft } from "./types.js";
+import {
+  normalizeDecisions,
+  parseDraft,
+  type ReviewDecisions,
+  type WorldImportDraft,
+} from "./model.js";
 
 /**
- * Local persistence for world-import review drafts, so a saved draft
- * survives refresh / reopen. Deliberately a small dedicated database —
- * game data lives in BrowserVault and must not be mixed with review-only
- * working state.
+ * Local persistence for world-import review drafts, so a saved draft and
+ * the owner's review decisions survive refresh / reopen. Deliberately a
+ * small dedicated database — game data lives in BrowserVault and must not
+ * be mixed with review-only working state.
  */
 
 export const WORLD_IMPORT_DRAFT_DB_NAME = "covel-world-import-review";
@@ -14,11 +19,13 @@ interface DraftRecord {
   readonly draftId: string;
   readonly savedAt: string;
   readonly draft: WorldImportDraft;
+  readonly decisions: ReviewDecisions;
 }
 
 export interface SavedDraft {
   readonly savedAt: string;
   readonly draft: WorldImportDraft;
+  readonly decisions: ReviewDecisions;
 }
 
 export class WorldImportDraftStore {
@@ -34,28 +41,64 @@ export class WorldImportDraftStore {
   async load(draftId: string): Promise<SavedDraft | null> {
     const record = await this.drafts.get(draftId);
     if (!record) return null;
-    // Validate on read: a corrupted or schema-drifted record must fail
-    // loudly instead of feeding broken data into the review UI.
-    const parsed = parseWorldImportDraft(record.draft);
-    if (!parsed.ok) {
-      throw new Error(
-        `Saved draft "${draftId}" failed validation: ${parsed.error}`,
-      );
-    }
-    return { savedAt: record.savedAt, draft: parsed.draft };
+    return this.validateRecord(draftId, record);
   }
 
-  async save(draft: WorldImportDraft): Promise<string> {
+  /**
+   * The review keeps a single working draft; pick the most recently saved
+   * record without the caller needing to know its id.
+   */
+  async loadLatest(): Promise<SavedDraft | null> {
+    const all = await this.drafts.toArray();
+    if (all.length === 0) return null;
+    const latest = all.reduce((a, b) => (a.savedAt >= b.savedAt ? a : b));
+    return this.validateRecord(latest.draftId, latest);
+  }
+
+  private validateRecord(
+    draftId: string,
+    record: DraftRecord,
+  ): SavedDraft | null {
+    // Validate on read: a corrupted or schema-drifted record must fail
+    // loudly instead of feeding broken data into the review UI. Decisions
+    // are UI state — normalize instead of reject.
+    const parsed = parseDraft(record.draft);
+    if (!parsed.ok) {
+      throw new Error(
+        `Saved draft "${draftId}" failed contract validation: ${parsed.error}`,
+      );
+    }
+    return {
+      savedAt: record.savedAt,
+      draft: parsed.draft,
+      decisions: normalizeDecisions(record.decisions),
+    };
+  }
+
+  async save(
+    draft: WorldImportDraft,
+    decisions: ReviewDecisions,
+  ): Promise<string> {
     const savedAt = new Date().toISOString();
     await this.drafts.put({
       draftId: draft.id,
       savedAt,
       draft,
+      decisions,
     });
     return savedAt;
   }
 
   async clear(draftId: string): Promise<void> {
     await this.drafts.delete(draftId);
+  }
+
+  /**
+   * Last-resort recovery when a stored record fails contract validation
+   * (e.g. legacy pre-contract drafts left by an older build): wipe the
+   * local review database so the owner can import again.
+   */
+  async clearAll(): Promise<void> {
+    await this.drafts.clear();
   }
 }

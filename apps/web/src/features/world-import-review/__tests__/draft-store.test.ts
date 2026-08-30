@@ -1,15 +1,8 @@
 import "fake-indexeddb/auto";
 
 import { describe, expect, it } from "vitest";
-import fixtureDraftJson from "../fixture/world-import-draft-v0.json";
 import { WorldImportDraftStore } from "../draft-store.js";
-import { parseWorldImportDraft, type WorldImportDraft } from "../types.js";
-
-function fixture(): WorldImportDraft {
-  const parsed = parseWorldImportDraft(fixtureDraftJson);
-  if (!parsed.ok) throw new Error(parsed.error);
-  return parsed.draft;
-}
+import { makeDraft } from "./model.test.js";
 
 let dbCounter = 0;
 function newStore() {
@@ -18,55 +11,67 @@ function newStore() {
 }
 
 describe("WorldImportDraftStore", () => {
-  it("returns null when no draft was saved", async () => {
+  it("returns null when nothing is stored", async () => {
     const store = newStore();
-    expect(await store.load("world-import-fixture-longzu-v0")).toBeNull();
+    expect(await store.loadLatest()).toBeNull();
   });
 
-  it("saves and reloads a draft unchanged", async () => {
+  it("saves and reloads the draft together with the review decisions", async () => {
     const store = newStore();
-    const draft = fixture();
-    const savedAt = await store.save(draft);
+    const draft = makeDraft();
+    const decisions = { acceptedAi: ["ai-1"], resolvedConflicts: ["rule-1"] };
+    const savedAt = await store.save(draft, decisions);
     expect(typeof savedAt).toBe("string");
 
-    const reloaded = await store.load(draft.id);
+    const reloaded = await store.loadLatest();
     expect(reloaded).not.toBeNull();
     expect(reloaded?.savedAt).toBe(savedAt);
     expect(reloaded?.draft).toEqual(draft);
+    expect(reloaded?.decisions).toEqual(decisions);
   });
 
-  it("overwrites a previous save for the same draft id", async () => {
+  it("overwrites the record for the same draft id and loadLatest picks the newest", async () => {
     const store = newStore();
-    const draft = fixture();
-    await store.save(draft);
+    const draft = makeDraft();
+    await store.save(draft, { acceptedAi: [], resolvedConflicts: [] });
     const edited = {
       ...draft,
       entries: draft.entries.map((e) =>
-        e.id === "char-lu-mingfei" ? { ...e, userEdited: true } : e,
+        e.id === "char-1" ? { ...e, content: "主人改动" } : e,
       ),
     };
-    await store.save(edited);
-    const reloaded = await store.load(draft.id);
+    const second = await store.save(edited, {
+      acceptedAi: ["rel-1"],
+      resolvedConflicts: [],
+    });
+    const reloaded = await store.loadLatest();
+    expect(reloaded?.savedAt).toBe(second);
     expect(
-      reloaded?.draft.entries.find((e) => e.id === "char-lu-mingfei")
-        ?.userEdited,
-    ).toBe(true);
+      reloaded?.draft.entries.find((e) => e.id === "char-1")?.content,
+    ).toBe("主人改动");
+    expect(reloaded?.decisions.acceptedAi).toEqual(["rel-1"]);
   });
 
-  it("clear removes the saved draft", async () => {
+  it("normalizes junk decisions instead of rejecting them", async () => {
     const store = newStore();
-    const draft = fixture();
-    await store.save(draft);
-    await store.clear(draft.id);
-    expect(await store.load(draft.id)).toBeNull();
+    const draft = makeDraft();
+    await store.save(draft, {
+      acceptedAi: [42, "ai-1"] as unknown as string[],
+      resolvedConflicts: undefined as unknown as string[],
+    });
+    const reloaded = await store.loadLatest();
+    expect(reloaded?.decisions).toEqual({
+      acceptedAi: ["ai-1"],
+      resolvedConflicts: [],
+    });
   });
 
-  it("rejects a corrupted saved record instead of returning it", async () => {
+  it("rejects a record that no longer satisfies the frozen contract", async () => {
     const store = newStore();
-    const draft = fixture();
-    await store.save(draft);
-    // Corrupt the record behind Dexie's back.
-    const db = await (
+    const draft = makeDraft();
+    await store.save(draft, { acceptedAi: [], resolvedConflicts: [] });
+    // Corrupt the record behind Dexie's back: unknown entry type.
+    const db = (
       store as unknown as {
         db: { table: (n: string) => { put: (r: unknown) => Promise<void> } };
       }
@@ -74,8 +79,24 @@ describe("WorldImportDraftStore", () => {
     await db.put({
       draftId: draft.id,
       savedAt: new Date().toISOString(),
-      draft: { ...draft, entries: "not-an-array" },
+      draft: {
+        ...draft,
+        entries: [
+          { ...draft.entries[0], type: "power_system" },
+          ...draft.entries.slice(1),
+        ],
+      },
+      decisions: { acceptedAi: [], resolvedConflicts: [] },
     });
-    await expect(store.load(draft.id)).rejects.toThrow(/failed validation/);
+    await expect(store.loadLatest()).rejects.toThrow(/contract validation/);
+  });
+
+  it("clear removes the saved draft", async () => {
+    const store = newStore();
+    const draft = makeDraft();
+    await store.save(draft, { acceptedAi: [], resolvedConflicts: [] });
+    await store.clear(draft.id);
+    expect(await store.load(draft.id)).toBeNull();
+    expect(await store.loadLatest()).toBeNull();
   });
 });

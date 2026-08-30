@@ -123,7 +123,11 @@ export async function request<T>(
       res = await fetch(url, {
         ...fetchInit,
         headers: {
-          "Content-Type": "application/json",
+          // FormData must keep the browser-generated multipart boundary —
+          // never stamp a JSON content-type over it.
+          ...(fetchInit.body instanceof FormData
+            ? {}
+            : { "Content-Type": "application/json" }),
           ...(needsProviderKeys(url) ? buildAiHeaders() : {}),
           ...sessionTokenHeader(url),
           ...sessionAuthHeaders(sessionId),

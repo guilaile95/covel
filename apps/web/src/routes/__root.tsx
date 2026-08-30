@@ -73,12 +73,13 @@ function RootLayout() {
   const hasSession = sessionState.session !== null;
   const sessionSearch = activeSid ? { sid: activeSid } : {};
 
-  // Active state for the primary nav. The 5 tabs map to either real routes
-  // (世界 / 会话 / 调试) or in-page panel toggles (插件 / 图像) so the active
-  // computation has to merge URL state with sub-views.
-  type NavId = "world" | "session" | "plugins" | "images" | "debug";
+  // Active state for the primary nav. The tabs map to either real routes
+  // (世界 / 导入 / 调试) or in-page panel toggles (会话 / 插件 / 图像) so the
+  // active computation has to merge URL state with sub-views.
+  type NavId = "world" | "import" | "session" | "plugins" | "images" | "debug";
   const activeNav: NavId | null = (() => {
     if (isDebugRoute) return "debug";
+    if (location.pathname.startsWith("/world-import-review")) return "import";
     if (isSessionRoute) {
       // World-select view (no session) implicitly maps to 世界
       if (!hasSession) return "world";
@@ -91,6 +92,7 @@ function RootLayout() {
     if (sessionState.session) backToWorldSelect();
     navigate({ to: "/session", search: {} });
   };
+  const goImport = () => navigate({ to: "/world-import-review", search: {} });
   const goSession = () => navigate({ to: "/session", search: sessionSearch });
   const goPlugins = () => {
     navigate({ to: "/session", search: sessionSearch });
@@ -109,6 +111,7 @@ function RootLayout() {
     disabled?: boolean;
   }> = [
     { id: "world", label: t("nav.world"), onClick: goWorld },
+    { id: "import", label: t("nav.import"), onClick: goImport },
     {
       id: "session",
       label: t("nav.session"),

@@ -10,14 +10,44 @@ import {
 } from "@testing-library/react";
 import { ReviewPage } from "../components/review-page.js";
 import { WorldImportDraftStore } from "../draft-store.js";
+import { makeDraft } from "./model.test.js";
 
 /**
- * End-to-end review journey over the frozen v0 fixture, at the component
- * level: load → browse categories → inspect sources → edit → decide on AI
- * inferences → resolve conflict → save → reopen → export-ready state.
+ * Review workbench flow over a contract-valid draft: status filters,
+ * decisions, save/reopen persistence, and the approve → world handoff.
+ * The server seam and the router/session integrations are mocked at their
+ * module boundaries.
  */
 
-const FIXTURE_TITLE = "龙族 I · 火之晨曦 — 世界导入草稿(审阅用 Fixture)";
+const {
+  exportApprovedWorldMock,
+  addWorldLocalMock,
+  getWorldMock,
+  navigateMock,
+} = vi.hoisted(() => ({
+  exportApprovedWorldMock: vi.fn(),
+  addWorldLocalMock: vi.fn(),
+  getWorldMock: vi.fn(),
+  navigateMock: vi.fn(),
+}));
+
+vi.mock("@/services/api/world-import.js", () => ({
+  exportApprovedWorld: exportApprovedWorldMock,
+  startWorldImport: vi.fn(),
+  getWorldImportJob: vi.fn(),
+}));
+
+vi.mock("@/services/api/worlds.js", () => ({
+  getWorld: getWorldMock,
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigateMock,
+}));
+
+vi.mock("@/stores/session-store.js", () => ({
+  useSession: () => ({ addWorldLocal: addWorldLocalMock }),
+}));
 
 let dbCounter = 0;
 function newStore() {
@@ -26,177 +56,159 @@ function newStore() {
 }
 
 beforeEach(() => {
-  // No ConfirmHost is mounted in tests, so requestConfirm falls back to
-  // window.confirm; tests stub it per case.
   vi.restoreAllMocks();
+  exportApprovedWorldMock.mockReset();
+  addWorldLocalMock.mockClear();
+  getWorldMock.mockReset();
+  navigateMock.mockClear();
 });
 
 afterEach(cleanup);
 
-async function renderReview(store: WorldImportDraftStore) {
+async function seedAndRender(store: WorldImportDraftStore) {
+  const draft = makeDraft();
+  await store.save(draft, { acceptedAi: [], resolvedConflicts: [] });
   render(<ReviewPage store={store} />);
-  await screen.findByText(FIXTURE_TITLE);
+  await screen.findByText("测试世界");
+  return draft;
 }
 
+/** Re-render against an already-seeded store (no reseed, decisions kept). */
+async function renderOnly(store: WorldImportDraftStore) {
+  render(<ReviewPage store={store} />);
+  await screen.findByText("测试世界");
+}
+
+/** Click the list item (first DOM occurrence) for an entry by name. */
 function clickEntry(name: string) {
-  fireEvent.click(screen.getByText(name));
+  const hit = screen.getAllByText(name)[0];
+  const button = hit?.closest("button");
+  if (!button) throw new Error(`list item button not found for ${name}`);
+  fireEvent.click(button);
 }
 
-async function save() {
+async function saveAll() {
   fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
   await screen.findByText(/已保存于/);
 }
 
-describe("World Import Review flow", () => {
-  it("loads the fixture and shows the overview with category filtering", async () => {
-    await renderReview(newStore());
+describe("World Import review flow", () => {
+  it("shows the review overview with status + category filters", async () => {
+    await seedAndRender(newStore());
 
-    // All nine fixture entries are listed.
-    for (const name of [
-      "路明非",
-      "诺诺",
-      "龙类研究会",
-      "血统压制",
-      "卡塞尔学院",
-      "村雨",
-      "言灵",
-      "路明非收到录取通知",
-      "路明非 → 诺诺:单向关注",
-    ]) {
-      expect(screen.getByText(name)).toBeDefined();
-    }
-    // Fresh fixture has one unresolved conflict — the export warning shows.
-    expect(screen.getByText(/仍有 1 个冲突未标记解决/)).toBeDefined();
+    // Completion states on the list items.
+    expect(screen.getAllByText("未审阅").length).toBe(4);
+    // Review summary row + filter chip both carry the pending counter.
+    expect(screen.getAllByText("待处理").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("已人工修改")).toBeDefined();
 
-    // Category filter narrows the list to characters only.
-    fireEvent.click(screen.getByRole("button", { name: "人物" }));
-    expect(screen.getByText("路明非")).toBeDefined();
-    expect(screen.getByText("诺诺")).toBeDefined();
-    expect(screen.queryByText("村雨")).toBeNull();
-    expect(screen.queryByText("血统压制")).toBeNull();
+    // Status filter: pending hides the untouched source-backed character.
+    fireEvent.click(screen.getByRole("button", { name: "待处理" }));
+    expect(screen.getByText("乙会")).toBeDefined();
+    expect(screen.getByText("禁令")).toBeDefined();
+    expect(screen.queryByText("林甲")).toBeNull();
 
-    // Back to all.
+    // Category filter combines with the status filter.
     fireEvent.click(screen.getByRole("button", { name: "全部" }));
-    expect(screen.getByText("村雨")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "规则" }));
+    expect(screen.getByText("禁令")).toBeDefined();
+    expect(screen.queryByText("乙会")).toBeNull();
   });
 
-  it("shows source locators for source-backed entries and flags pure AI inferences", async () => {
-    await renderReview(newStore());
-
-    clickEntry("路明非");
-    expect(
-      await screen.findByRole("heading", { name: "路明非" }),
-    ).toBeDefined();
-    expect(screen.getByText("第一章 · 卡塞尔学院的邀请函")).toBeDefined();
-    expect(screen.getByText(/欢迎路明非同学加入卡塞尔学院/)).toBeDefined();
-
-    clickEntry("龙类研究会");
-    expect(await screen.findByText(/无来源引用/)).toBeDefined();
-  });
-
-  it("edit persistence: edit name, save, reopen shows the edited draft", async () => {
+  it("accepts an AI inference, saves, and the decision survives reopen", async () => {
     const store = newStore();
-    await renderReview(store);
+    await seedAndRender(store);
 
-    clickEntry("路明非");
-    const nameInput = await screen.findByRole("textbox", { name: "名称" });
-    fireEvent.change(nameInput, { target: { value: "路明非(已审)" } });
-    expect(screen.getAllByText("已人工编辑").length).toBeGreaterThan(0);
-
-    await save();
-    cleanup();
-
-    await renderReview(store);
-    expect(await screen.findByText("路明非(已审)")).toBeDefined();
-    // Fresh load is not dirty; save is disabled again.
-    expect(
-      screen.getByRole("button", { name: "保存草稿" }).hasAttribute("disabled"),
-    ).toBe(true);
-  });
-
-  it("accepts an AI inference and the decision survives save + reopen", async () => {
-    const store = newStore();
-    await renderReview(store);
-
-    clickEntry("龙类研究会");
+    clickEntry("乙会");
     fireEvent.click(
       await screen.findByRole("button", { name: "接受 AI 推断" }),
     );
-    expect(screen.getAllByText("已接受").length).toBeGreaterThan(0);
-    await save();
+    expect(screen.getAllByText("AI 已接受").length).toBeGreaterThan(0);
+
+    await saveAll();
     cleanup();
 
-    await renderReview(store);
-    clickEntry("龙类研究会");
+    await renderOnly(store);
     await waitFor(() => {
-      expect(screen.getAllByText("已接受").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("AI 已接受").length).toBeGreaterThan(0);
     });
+    // Pending dropped to 1 — the accepted faction no longer pends.
+    fireEvent.click(screen.getByRole("button", { name: "待处理" }));
+    expect(screen.getByText("禁令")).toBeDefined();
+    expect(screen.queryByText("乙会")).toBeNull();
   });
 
-  it("deletes an AI inference only after explicit confirmation", async () => {
+  it("resolves a conflict with edited notes; approval unlocks and hands over to the world", async () => {
     const store = newStore();
-    await renderReview(store);
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockImplementation(() => false);
+    const draft = await seedAndRender(store);
 
-    clickEntry("路明非 → 诺诺:单向关注");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "删除 AI 推断" }),
-    );
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
-    // Refused — entry stays (listed once, plus the detail heading).
+    // Approval is blocked while a conflict is unresolved.
     expect(
-      screen.getAllByText("路明非 → 诺诺:单向关注").length,
-    ).toBeGreaterThan(0);
+      screen
+        .getByRole("button", { name: "批准并生成世界" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
 
-    confirmSpy.mockImplementation(() => true);
-    fireEvent.click(screen.getByRole("button", { name: "删除 AI 推断" }));
-    await waitFor(() => {
-      expect(screen.queryByText("路明非 → 诺诺:单向关注")).toBeNull();
-    });
-  });
-
-  it("resolves a conflict: edits notes, marks resolved, survives save + reopen", async () => {
-    const store = newStore();
-    await renderReview(store);
-
-    clickEntry("血统压制");
+    clickEntry("禁令");
     const notes = await screen.findByRole("textbox", { name: "冲突说明" });
-    fireEvent.change(notes, {
-      target: { value: "已复核两处来源,以评级条款为准。" },
-    });
+    fireEvent.change(notes, { target: { value: "以第二章为准。" } });
     fireEvent.click(screen.getByRole("button", { name: "标记冲突已解决" }));
-    expect(screen.getAllByText("已解决").length).toBeGreaterThan(0);
-    await save();
-    // Live warning disappears once the conflict is resolved.
-    expect(screen.queryByText(/仍有 1 个冲突未标记解决/)).toBeNull();
+    expect(screen.getAllByText("冲突已解决").length).toBeGreaterThan(0);
+    await saveAll();
     cleanup();
 
-    await renderReview(store);
-    clickEntry("血统压制");
-    const notesAfter = await screen.findByRole("textbox", {
-      name: "冲突说明",
+    await renderOnly(store);
+    // Wait for the reopened decisions to land.
+    await waitFor(() => {
+      expect(screen.getAllByText("冲突已解决").length).toBeGreaterThan(0);
     });
-    expect((notesAfter as HTMLTextAreaElement).value).toBe(
-      "已复核两处来源,以评级条款为准。",
+    const approveButton = screen.getByRole("button", {
+      name: "批准并生成世界",
+    });
+    expect(approveButton.hasAttribute("disabled")).toBe(false);
+
+    exportApprovedWorldMock.mockResolvedValue({
+      world: { id: draft.id, name: "测试世界" },
+      worldDirName: `imported-${draft.id}`,
+      summary: { files: ["world.yaml"], counts: { entries: 4 } },
+    });
+    getWorldMock.mockResolvedValue({ id: draft.id, name: "测试世界" });
+    fireEvent.click(approveButton);
+    await screen.findByText("世界已生成");
+    expect(exportApprovedWorldMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "test-draft" }),
+      ["rule-1"],
     );
-    expect(screen.getByRole("button", { name: "取消解决标记" })).toBeDefined();
+
+    // Start game pulls the generated world into the session store's list
+    // and hands over to the existing world-select path.
+    fireEvent.click(screen.getByRole("button", { name: "开始游戏" }));
+    await waitFor(() => {
+      expect(getWorldMock).toHaveBeenCalledWith(draft.id);
+      expect(addWorldLocalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: draft.id }),
+      );
+      expect(navigateMock).toHaveBeenCalled();
+    });
   });
 
-  it("reset to fixture discards saved edits", async () => {
+  it("shows loader failures verbatim instead of faking success", async () => {
     const store = newStore();
-    await renderReview(store);
-    vi.spyOn(window, "confirm").mockImplementation(() => true);
+    await seedAndRender(store);
 
-    clickEntry("路明非");
-    const nameInput = await screen.findByRole("textbox", { name: "名称" });
-    fireEvent.change(nameInput, { target: { value: "路明非(已审)" } });
-    await save();
+    clickEntry("禁令");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "标记冲突已解决" }),
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "重置为 fixture" }));
-    // The page reloads the fixture asynchronously (loading state in between).
-    await screen.findByText("路明非", undefined, { timeout: 3000 });
-    expect(screen.queryByText("路明非(已审)")).toBeNull();
+    exportApprovedWorldMock.mockRejectedValue(
+      new Error(
+        "Covel world loader rejected the generated package (see server log for validation details)",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "批准并生成世界" }));
+    await screen.findByText(/世界生成失败/);
+    expect(screen.getByText(/Covel world loader rejected/)).toBeDefined();
+    expect(screen.queryByText("世界已生成")).toBeNull();
   });
 });

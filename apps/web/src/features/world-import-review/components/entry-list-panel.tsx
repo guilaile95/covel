@@ -1,28 +1,33 @@
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, PencilLine } from "lucide-react";
 import { cn } from "@/lib/utils.js";
-import { countByType, filterEntriesByType } from "../draft-actions.js";
-import type {
-  EntryType,
-  WorldImportDraft,
-  WorldImportDraftEntry,
-} from "../types.js";
-import { ENTRY_TYPES } from "../types.js";
+import {
+  countByType,
+  ENTRY_TYPES,
+  entryReviewStatus,
+  filterEntries,
+  type EntryType,
+  type ReviewDecisions,
+  type StatusFilter,
+  type WorldImportDraft,
+  type DraftEntry,
+} from "../model.js";
 import { ProvenanceBadge } from "./provenance-badge.js";
+import { ReviewStatusChip } from "./review-status-chip.js";
 
 /**
- * Left pane of the review page: category filter and the entry list. The
- * list keeps import order; provenance badges carry the at-a-glance signal.
+ * Left pane of the review page: status filter + category filter + the
+ * entry list. The list keeps import order; provenance and review-status
+ * chips carry the at-a-glance signal.
  */
 
-function CategoryChip({
+function FilterChip({
   label,
   count,
   active,
   onClick,
 }: {
   label: string;
-  count: number;
+  count?: number;
   active: boolean;
   onClick: () => void;
 }) {
@@ -40,25 +45,28 @@ function CategoryChip({
       )}
     >
       <span>{label}</span>
-      <span className="text-[10px] font-semibold tabular-nums opacity-75">
-        {count}
-      </span>
+      {count !== undefined && (
+        <span className="text-[10px] font-semibold tabular-nums opacity-75">
+          {count}
+        </span>
+      )}
     </button>
   );
 }
 
 function EntryListItem({
   entry,
+  decisions,
   selected,
   onSelect,
   typeLabel,
 }: {
-  entry: WorldImportDraftEntry;
+  entry: DraftEntry;
+  decisions: ReviewDecisions;
   selected: boolean;
   onSelect: () => void;
   typeLabel: string;
 }) {
-  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -84,31 +92,24 @@ function EntryListItem({
         <span className="border border-border/70 px-1.5 py-px rounded-(--radius-control)">
           {typeLabel}
         </span>
-        {entry.userEdited && (
-          <span className="inline-flex items-center gap-1 text-primary">
-            <PencilLine className="h-3 w-3" aria-hidden />
-            {t("worldImport.detail.userEdited")}
-          </span>
-        )}
-        {entry.provenanceStatus === "ai-inferred" && entry.aiAccepted && (
-          <span className="inline-flex items-center gap-1 text-primary">
-            <CheckCircle2 className="h-3 w-3" aria-hidden />
-            {t("worldImport.ai.accepted")}
-          </span>
-        )}
-        {entry.provenanceStatus === "conflict" && entry.conflictResolved && (
-          <span className="inline-flex items-center gap-1 text-primary">
-            <CheckCircle2 className="h-3 w-3" aria-hidden />
-            {t("worldImport.conflict.resolved")}
-          </span>
-        )}
+        <ReviewStatusChip status={entryReviewStatus(entry, decisions)} />
       </div>
     </button>
   );
 }
 
+const STATUS_FILTERS: StatusFilter[] = [
+  "all",
+  "pending",
+  "ai-inferred",
+  "conflict",
+];
+
 export interface EntryListPanelProps {
   draft: WorldImportDraft;
+  decisions: ReviewDecisions;
+  statusFilter: StatusFilter;
+  onStatusFilterChange: (filter: StatusFilter) => void;
   activeType: EntryType | null;
   onTypeChange: (type: EntryType | null) => void;
   selectedEntryId: string | null;
@@ -117,6 +118,9 @@ export interface EntryListPanelProps {
 
 export function EntryListPanel({
   draft,
+  decisions,
+  statusFilter,
+  onStatusFilterChange,
   activeType,
   onTypeChange,
   selectedEntryId,
@@ -124,19 +128,32 @@ export function EntryListPanel({
 }: EntryListPanelProps) {
   const { t } = useTranslation();
   const typeCounts = countByType(draft);
-  const visibleEntries = filterEntriesByType(draft, activeType);
+  const visibleEntries = filterEntries(draft, decisions, {
+    type: activeType,
+    status: statusFilter,
+  });
 
   return (
     <div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {STATUS_FILTERS.map((status) => (
+          <FilterChip
+            key={status}
+            label={t(`worldImport.filter.${status}`)}
+            active={statusFilter === status}
+            onClick={() => onStatusFilterChange(status)}
+          />
+        ))}
+      </div>
       <div className="flex flex-wrap gap-1.5 mb-4">
-        <CategoryChip
-          label={t("worldImport.filter.all")}
+        <FilterChip
+          label={t("worldImport.category.all")}
           count={draft.entries.length}
           active={activeType === null}
           onClick={() => onTypeChange(null)}
         />
-        {ENTRY_TYPES.map((type) => (
-          <CategoryChip
+        {(Object.values(ENTRY_TYPES) as EntryType[]).map((type) => (
+          <FilterChip
             key={type}
             label={t(`worldImport.category.${type}`)}
             count={typeCounts[type]}
@@ -156,6 +173,7 @@ export function EntryListPanel({
             <EntryListItem
               key={entry.id}
               entry={entry}
+              decisions={decisions}
               selected={entry.id === selectedEntryId}
               onSelect={() => onSelectEntry(entry.id)}
               typeLabel={t(`worldImport.category.${entry.type}`)}

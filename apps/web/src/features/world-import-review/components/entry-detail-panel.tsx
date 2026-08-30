@@ -4,13 +4,23 @@ import { Button } from "@/components/ui/button.js";
 import { inputCls, textareaCls } from "@/components/world/editor-helpers.js";
 import { requestConfirm } from "@/lib/confirm-channel.js";
 import { cn } from "@/lib/utils.js";
-import { resolveSourceTitle, type EntryEditPatch } from "../draft-actions.js";
-import type { WorldImportDraft, WorldImportDraftEntry } from "../types.js";
+import {
+  isAiAccepted,
+  isConflictResolved,
+  resolveSourceTitle,
+  type EntryEditPatch,
+  type ReviewDecisions,
+  type WorldImportDraft,
+  type DraftEntry,
+} from "../model.js";
 import { ProvenanceBadge } from "./provenance-badge.js";
+import { ReviewStatusChip } from "./review-status-chip.js";
+import { entryReviewStatus } from "../model.js";
 
 /**
  * Right pane of the review page: the owner-facing editor for one entry.
- * Every content edit funnels through onEdit, which stamps userEdited.
+ * Content edits funnel through onEdit (stamps userEdited via the shared
+ * contract helper); AI accept and conflict resolution are decisions.
  */
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -25,7 +35,7 @@ function AliasEditor({
   entry,
   onEdit,
 }: {
-  entry: WorldImportDraftEntry;
+  entry: DraftEntry;
   onEdit: (entryId: string, patch: EntryEditPatch) => void;
 }) {
   const { t } = useTranslation();
@@ -86,7 +96,7 @@ function SourceRefsSection({
   entry,
 }: {
   draft: WorldImportDraft;
-  entry: WorldImportDraftEntry;
+  entry: DraftEntry;
 }) {
   const { t } = useTranslation();
   if (entry.sourceRefs.length === 0) {
@@ -109,11 +119,6 @@ function SourceRefsSection({
           <div className="mt-0.5 text-xs text-muted-foreground font-mono">
             {ref.locator}
           </div>
-          {ref.quote && (
-            <blockquote className="mt-1.5 border-l-2 border-border pl-2.5 text-xs text-muted-foreground italic">
-              {ref.quote}
-            </blockquote>
-          )}
         </div>
       ))}
     </div>
@@ -122,22 +127,25 @@ function SourceRefsSection({
 
 function ConflictSection({
   entry,
+  decisions,
   onEdit,
   onResolveConflict,
 }: {
-  entry: WorldImportDraftEntry;
+  entry: DraftEntry;
+  decisions: ReviewDecisions;
   onEdit: (entryId: string, patch: EntryEditPatch) => void;
   onResolveConflict: (entryId: string, resolved: boolean) => void;
 }) {
   const { t } = useTranslation();
   if (entry.provenanceStatus !== "conflict") return null;
+  const resolved = isConflictResolved(entry, decisions);
   return (
     <section className="border border-destructive/40 bg-destructive/5 rounded-(--radius-control) p-3">
       <div className="flex items-center justify-between gap-2 mb-2">
         <h3 className="ui-eyebrow text-destructive">
           {t("worldImport.conflict.title")}
         </h3>
-        {entry.conflictResolved && (
+        {resolved && (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
             <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
             {t("worldImport.conflict.resolved")}
@@ -156,11 +164,11 @@ function ConflictSection({
       <div className="mt-2">
         <Button
           type="button"
-          variant={entry.conflictResolved ? "secondary" : "outline"}
+          variant={resolved ? "secondary" : "outline"}
           size="sm"
-          onClick={() => onResolveConflict(entry.id, !entry.conflictResolved)}
+          onClick={() => onResolveConflict(entry.id, !resolved)}
         >
-          {entry.conflictResolved
+          {resolved
             ? t("worldImport.conflict.unmark")
             : t("worldImport.conflict.markResolved")}
         </Button>
@@ -171,15 +179,18 @@ function ConflictSection({
 
 function AiInferenceSection({
   entry,
+  decisions,
   onAcceptAi,
   onRemoveEntry,
 }: {
-  entry: WorldImportDraftEntry;
+  entry: DraftEntry;
+  decisions: ReviewDecisions;
   onAcceptAi: (entryId: string) => void;
   onRemoveEntry: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   if (entry.provenanceStatus !== "ai-inferred") return null;
+  const accepted = isAiAccepted(entry, decisions);
   const handleDelete = async () => {
     const approved = await requestConfirm({
       title: t("worldImport.ai.deleteConfirmTitle"),
@@ -195,7 +206,7 @@ function AiInferenceSection({
         {t("worldImport.ai.title")}
       </h3>
       <div className="flex items-center flex-wrap gap-2">
-        {entry.aiAccepted ? (
+        {accepted ? (
           <span className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
             <CheckCircle2 className="h-4 w-4" aria-hidden />
             {t("worldImport.ai.accepted")}
@@ -228,7 +239,8 @@ function AiInferenceSection({
 
 export interface EntryDetailPanelProps {
   draft: WorldImportDraft;
-  entry: WorldImportDraftEntry | null;
+  entry: DraftEntry | null;
+  decisions: ReviewDecisions;
   onEdit: (entryId: string, patch: EntryEditPatch) => void;
   onAcceptAi: (entryId: string) => void;
   onRemoveEntry: (entryId: string) => void;
@@ -238,6 +250,7 @@ export interface EntryDetailPanelProps {
 export function EntryDetailPanel({
   draft,
   entry,
+  decisions,
   onEdit,
   onAcceptAi,
   onRemoveEntry,
@@ -266,21 +279,19 @@ export function EntryDetailPanel({
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <ProvenanceBadge status={entry.provenanceStatus} />
-          {entry.userEdited && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary border border-primary/40 rounded-(--radius-control) px-1.5 py-0.5">
-              {t("worldImport.detail.userEdited")}
-            </span>
-          )}
+          <ReviewStatusChip status={entryReviewStatus(entry, decisions)} />
         </div>
       </header>
 
       <AiInferenceSection
         entry={entry}
+        decisions={decisions}
         onAcceptAi={onAcceptAi}
         onRemoveEntry={onRemoveEntry}
       />
       <ConflictSection
         entry={entry}
+        decisions={decisions}
         onEdit={onEdit}
         onResolveConflict={onResolveConflict}
       />

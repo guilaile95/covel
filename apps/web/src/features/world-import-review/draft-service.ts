@@ -1,22 +1,10 @@
-import fixtureDraftJson from "./fixture/world-import-draft-v0.json";
-import { parseWorldImportDraft, type WorldImportDraft } from "./types.js";
+import type { WorldImportDraft } from "./model.js";
 
 /**
- * Draft intake seam for the review UI. Today it serves the frozen v0
- * fixture (no dependency on Dev B's extraction branch); tomorrow the real
- * pipeline hands its result over through the same async contract.
+ * Export helpers for the approved draft. The draft content itself always
+ * travels as contract JSON; the browser download is just a convenience
+ * wrapper around `JSON.stringify`.
  */
-
-const FIXTURE_LOAD_DELAY_MS = 120;
-
-export async function fetchFixtureDraft(): Promise<WorldImportDraft> {
-  await new Promise((resolve) => setTimeout(resolve, FIXTURE_LOAD_DELAY_MS));
-  const parsed = parseWorldImportDraft(fixtureDraftJson as unknown);
-  if (!parsed.ok) {
-    throw new Error(parsed.error);
-  }
-  return parsed.draft;
-}
 
 export function buildExportPayload(draft: WorldImportDraft): string {
   return JSON.stringify(draft, null, 2);
@@ -26,7 +14,7 @@ export function exportFileName(draft: WorldImportDraft): string {
   return `world-import-draft-${draft.id}.json`;
 }
 
-/** Trigger a browser download of the approved draft. */
+/** Trigger a browser download of the current draft. */
 export function downloadWorldImportDraft(draft: WorldImportDraft): void {
   const blob = new Blob([buildExportPayload(draft)], {
     type: "application/json",

@@ -17,6 +17,7 @@ export {
 
 export * from "./api/types.js";
 export * from "./api/worlds.js";
+export * from "./api/world-import.js";
 export * from "./api/sessions.js";
 export * from "./api/packages.js";
 export * from "./api/llm.js";

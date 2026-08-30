@@ -2,7 +2,7 @@ import { BookOpen, Sparkles, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/lib/utils.js";
-import type { ProvenanceStatus } from "../types.js";
+import type { ProvenanceStatus } from "../model.js";
 
 /**
  * Provenance is the core signal of the review UI: where did this entry's
