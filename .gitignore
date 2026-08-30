@@ -137,3 +137,6 @@ docker/docker-compose.mock.replay.yml
 # ── Local developer docs ──
 devs/docs/
 .superpowers/
+
+# Worlds generated through /api/world-import/export (review-approved drafts)
+worlds/imported-*/

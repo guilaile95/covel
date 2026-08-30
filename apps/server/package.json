@@ -36,6 +36,7 @@
     "@covel/shared": "workspace:*",
     "@covel/store": "workspace:*",
     "@covel/tools": "workspace:*",
+    "@covel/world-import": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "@types/yauzl": "^3.4.0",
     "ajv": "^8.20.0",
