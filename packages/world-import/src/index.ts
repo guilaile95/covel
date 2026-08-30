@@ -26,6 +26,9 @@ export {
   serializeDraft,
   loadDraft,
   applyUserEdit,
+  setUserDecision,
+  markAiAccepted,
+  markConflictResolved,
   DraftContractError,
   type UserEditPatch,
 } from "./draft.js";
@@ -41,3 +44,36 @@ export {
   type WorldImportResult,
 } from "./pipeline.js";
 export { runCli, parseCliArgs } from "./cli.js";
+export {
+  LlmExtractionAdapter,
+  ExtractionOutputError,
+  parseExtractionJson,
+  validateExtractions,
+  type ExtractionLlmBackend,
+  type AdapterUsage,
+  type UsageReportingAdapter,
+  type LlmExtractionAdapterOptions,
+} from "./extraction/llm.js";
+export {
+  createFakeExtractionBackend,
+  extractionResponse,
+  type FakeLlmBackend,
+  type FakeLlmResponse,
+  type FakeLlmScriptEntry,
+} from "./extraction/fake-llm.js";
+export {
+  createImportJob,
+  runImportJob,
+  resumeImportJob,
+  getImportProgress,
+  exportJobCheckpoint,
+  restoreImportJob,
+  ImportJob,
+  type ImportJobConfig,
+  type ImportJobStatus,
+  type ImportJobUsage,
+  type ImportProgress,
+  type ImportJobResult,
+  type ImportJobCheckpoint,
+  type RestoreImportJobOptions,
+} from "./job.js";

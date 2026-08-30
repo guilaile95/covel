@@ -109,9 +109,12 @@ describe("mergeExtractions", () => {
     );
     const linWan = findEntry(draft, "林晚");
     // 第一章 paragraph 2 is "旅人们低声叫她晚姐" — chunk-relative p2 == chapter p2
-    expect(linWan.sourceRefs).toContainEqual({
-      sourceId,
-      locator: formatLocator(1, 2, 2),
-    });
+    expect(linWan.sourceRefs).toContainEqual(
+      expect.objectContaining({
+        sourceId,
+        locator: formatLocator(1, 2, 2),
+        quote: expect.stringContaining("晚姐"),
+      }),
+    );
   });
 });

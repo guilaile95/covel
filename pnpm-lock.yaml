@@ -620,6 +620,9 @@ importers:
 
   packages/world-import:
     dependencies:
+      '@covel/ai-provider':
+        specifier: workspace:*
+        version: link:../ai-provider
       fast-xml-parser:
         specifier: ^5.2.0
         version: 5.11.0

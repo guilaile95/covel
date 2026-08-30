@@ -13,7 +13,11 @@
  *    paragraphs stay ai-inferred; inferred lines merged into a
  *    source-backed entry keep an explicit [推断] prefix;
  *  - userEdited entries from an existing draft are kept verbatim; incoming
- *    extractions matching them are skipped instead of overwriting.
+ *    extractions matching them are skipped instead of overwriting;
+ *  - conflictResolved entries keep receiving new contributions, but the
+ *    resolved conflict is never re-created (no conflict status, no notes);
+ *  - aiAccepted / conflictResolved / userEdited flags survive re-merge;
+ *  - source-backed refs carry a short verbatim quote (truncated).
  */
 
 import type {
@@ -58,6 +62,9 @@ interface InternalEntry extends DraftEntry {
   keys: Set<string>;
 }
 
+/** Maximum characters of verbatim quote kept per sourceRef. */
+const QUOTE_MAX_CHARS = 160;
+
 export interface MergeOptions {
   /** Previously built draft; entries with userEdited=true are preserved verbatim. */
   existingDraft?: WorldImportDraft;
@@ -88,19 +95,24 @@ export function mergeExtractions(
     return keys;
   };
 
-  // userEdited entries are merge targets (dedup) but never modified.
+  // Seed entries that carry user decisions so their flags survive re-merge:
+  //  - userEdited → fully frozen (incoming extractions are dropped);
+  //  - conflictResolved / aiAccepted → keep merging, flags ride along.
   if (options.existingDraft) {
     for (const entry of options.existingDraft.entries) {
-      if (entry.userEdited !== true) continue;
-      const frozen: InternalEntry = {
+      const frozen = entry.userEdited === true;
+      const decided =
+        entry.conflictResolved === true || entry.aiAccepted === true;
+      if (!frozen && !decided) continue;
+      const seeded: InternalEntry = {
         ...entry,
         contributions: [],
         claims: new Map(),
         conflictLines: [],
         keys: keysOf(entry.type, entry.name, entry.aliases),
       };
-      entries.set(entry.id, frozen);
-      registerKeys(frozen);
+      entries.set(entry.id, seeded);
+      registerKeys(seeded);
     }
   }
 
@@ -152,6 +164,7 @@ export function mergeExtractions(
           ? {
               sourceId: batch.chunk.sourceId,
               locator: locatorFor(raw.paragraphs, batch.chunk),
+              ...quoteFor(raw.paragraphs, batch.chunk),
             }
           : undefined;
 
@@ -169,7 +182,8 @@ export function mergeExtractions(
           });
           continue;
         }
-        if (state.value !== value) {
+        if (state.value !== value && target.conflictResolved !== true) {
+          // Resolved conflicts are never re-created for the same entry.
           target.conflictLines.push(
             `字段「${field}」冲突：${state.value}（${state.refs.join("、")}）vs ${value}（${ref ? describeRef(ref) : "无来源"}）`,
           );
@@ -220,6 +234,20 @@ function locatorFor(paragraphs: number[] | undefined, chunk: Chunk): string {
   );
 }
 
+function quoteFor(
+  paragraphs: number[] | undefined,
+  chunk: Chunk,
+): { quote: string } | {} {
+  const chunkParagraphs = chunk.text.split("\n");
+  const first =
+    paragraphs && paragraphs.length > 0
+      ? chunkParagraphs[paragraphs[0] - 1]
+      : chunkParagraphs[0];
+  if (first === undefined) return {};
+  const quote = first.trim().slice(0, QUOTE_MAX_CHARS);
+  return quote.length > 0 ? { quote } : {};
+}
+
 function describeRef(ref: SourceRef): string {
   return `${ref.sourceId} ${ref.locator}`;
 }
@@ -243,8 +271,10 @@ function finalizeEntry(entry: InternalEntry): DraftEntry {
     }
   }
 
+  const resolved = entry.conflictResolved === true;
   let provenanceStatus: ProvenanceStatus = "ai-inferred";
-  if (entry.conflictLines.length > 0) provenanceStatus = "conflict";
+  if (entry.conflictLines.length > 0 && !resolved)
+    provenanceStatus = "conflict";
   else if (hasSource) provenanceStatus = "source-backed";
 
   const sourceRefs = entry.contributions
@@ -253,7 +283,10 @@ function finalizeEntry(entry: InternalEntry): DraftEntry {
     .filter(
       (ref, i, all) =>
         all.findIndex(
-          (r) => r.sourceId === ref.sourceId && r.locator === ref.locator,
+          (r) =>
+            r.sourceId === ref.sourceId &&
+            r.locator === ref.locator &&
+            r.quote === ref.quote,
         ) === i,
     );
 
@@ -267,9 +300,11 @@ function finalizeEntry(entry: InternalEntry): DraftEntry {
     sourceRefs,
   };
 
-  if (entry.conflictLines.length > 0) {
+  if (entry.conflictLines.length > 0 && !resolved) {
     result.conflictNotes = entry.conflictLines.join("；");
   }
+  if (entry.aiAccepted === true) result.aiAccepted = true;
+  if (resolved) result.conflictResolved = true;
   return result;
 }
 
@@ -285,6 +320,8 @@ function stripInternal(entry: InternalEntry): DraftEntry {
     sourceRefs: entry.sourceRefs.map((ref) => ({ ...ref })),
     conflictNotes: entry.conflictNotes,
     userEdited: true,
+    aiAccepted: entry.aiAccepted,
+    conflictResolved: entry.conflictResolved,
   };
 }
 

@@ -51,6 +51,11 @@ export interface DraftSource {
 export interface SourceRef {
   sourceId: string;
   locator: string;
+  /**
+   * Optional short verbatim quote backing this reference (truncated by
+   * merge; never a wholesale copy of the source text).
+   */
+  quote?: string;
 }
 
 export interface DraftEntry {
@@ -62,7 +67,15 @@ export interface DraftEntry {
   provenanceStatus: ProvenanceStatus;
   sourceRefs: SourceRef[];
   conflictNotes?: string;
+  /** User manually edited this entry. Absent = false. */
   userEdited?: boolean;
+  /** User accepted an ai-inferred entry as-is. Absent = false. */
+  aiAccepted?: boolean;
+  /**
+   * User resolved a conflict (possibly by editing content). Absent = false.
+   * Later merges must not re-create the resolved conflict for this entry.
+   */
+  conflictResolved?: boolean;
 }
 
 /** Frozen contract version of WorldImportDraft. */

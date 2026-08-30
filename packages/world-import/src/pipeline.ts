@@ -20,7 +20,8 @@ import type {
   ExtractionAdapter,
   WorldImportDraft,
 } from "./types.js";
-import { hash8, slugifyId } from "./util.js";
+import { hash8 } from "./util.js";
+import { buildDraftMeta } from "./draft-meta.js";
 
 export interface ImportInput {
   /** Display/file name — extension decides the extractor. */
@@ -101,15 +102,12 @@ export async function runWorldImport(
     if (raw.length > 0) batches.push({ chunk, raw });
   }
 
-  const signature = `${options.title}\u0000${sources.map((s) => `${s.kind}:${s.file}`).join("\u0001")}`;
-  const draftId =
-    options.id ?? `${slugifyId(options.title)}-${hash8(signature)}`;
-
-  const summary = buildSummary(options.title, sources.length, {
-    chapters: new Set(allChunks.map((c) => `${c.sourceId}:${c.chapterIndex}`))
-      .size,
-    chunks: allChunks.length,
-    extractions: extractionCount,
+  const meta = buildDraftMeta({
+    title: options.title,
+    explicitId: options.id,
+    sources,
+    chunks: allChunks,
+    extractionCount,
   });
 
   const mergeOptions: MergeOptions = options.existingDraft
@@ -117,7 +115,7 @@ export async function runWorldImport(
     : {};
 
   const draft = mergeExtractions(
-    { id: draftId, title: options.title, sources, summary },
+    { id: meta.id, title: options.title, sources, summary: meta.summary },
     batches,
     mergeOptions,
   );
@@ -138,12 +136,4 @@ export async function runWorldImport(
   };
 
   return { draft, stats };
-}
-
-function buildSummary(
-  title: string,
-  sourceCount: number,
-  counts: { chapters: number; chunks: number; extractions: number },
-): string {
-  return `《${title}》导入草稿：${sourceCount} 个来源，${counts.chapters} 章，${counts.chunks} 个分块，原始抽取 ${counts.extractions} 条。条目内容需人工审核后方可定稿。`;
 }

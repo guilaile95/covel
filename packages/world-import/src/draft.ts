@@ -88,11 +88,17 @@ function parseEntry(value: unknown, index: number): DraftEntry {
       `${what}.conflictNotes`,
     );
   }
-  if (raw.userEdited !== undefined) {
-    if (typeof raw.userEdited !== "boolean") {
-      throw new DraftContractError(`${what}.userEdited must be a boolean`);
+  for (const flag of [
+    "userEdited",
+    "aiAccepted",
+    "conflictResolved",
+  ] as const) {
+    if (raw[flag] !== undefined) {
+      if (typeof raw[flag] !== "boolean") {
+        throw new DraftContractError(`${what}.${flag} must be a boolean`);
+      }
+      entry[flag] = raw[flag];
     }
-    entry.userEdited = raw.userEdited;
   }
   return entry;
 }
@@ -101,7 +107,7 @@ function requireStringArrayKeyed(
   value: unknown,
   what: string,
   field: "sourceRefs",
-): Array<{ sourceId: string; locator: string }> {
+): Array<{ sourceId: string; locator: string; quote?: string }> {
   if (!Array.isArray(value)) {
     throw new DraftContractError(`${what}.${field} must be an array`);
   }
@@ -110,6 +116,10 @@ function requireStringArrayKeyed(
     return {
       sourceId: requireString(ref.sourceId, `${what}.${field}[${i}].sourceId`),
       locator: requireString(ref.locator, `${what}.${field}[${i}].locator`),
+      quote:
+        ref.quote === undefined
+          ? undefined
+          : requireString(ref.quote, `${what}.${field}[${i}].quote`),
     };
   });
 }
@@ -171,7 +181,14 @@ function requireArray(value: unknown, what: string): unknown[] {
 export type UserEditPatch = Partial<
   Pick<
     DraftEntry,
-    "name" | "aliases" | "content" | "provenanceStatus" | "conflictNotes"
+    | "name"
+    | "aliases"
+    | "content"
+    | "provenanceStatus"
+    | "conflictNotes"
+    | "userEdited"
+    | "aiAccepted"
+    | "conflictResolved"
   >
 >;
 
@@ -199,4 +216,40 @@ export function applyUserEdit(
     throw new Error(`applyUserEdit: no entry with id "${entryIdToEdit}"`);
   }
   return { ...draft, entries };
+}
+
+/**
+ * Record the user's decision flags on one entry WITHOUT marking it
+ * userEdited: accepting an AI inference or resolving a conflict does not
+ * necessarily change the content. Returns a NEW draft.
+ */
+export function setUserDecision(
+  draft: WorldImportDraft,
+  entryIdToEdit: string,
+  decision: Pick<UserEditPatch, "aiAccepted" | "conflictResolved">,
+): WorldImportDraft {
+  let found = false;
+  const entries = draft.entries.map((entry) => {
+    if (entry.id !== entryIdToEdit) return entry;
+    found = true;
+    return { ...entry, ...decision };
+  });
+  if (!found) {
+    throw new Error(`setUserDecision: no entry with id "${entryIdToEdit}"`);
+  }
+  return { ...draft, entries };
+}
+
+export function markAiAccepted(
+  draft: WorldImportDraft,
+  entryIdToEdit: string,
+): WorldImportDraft {
+  return setUserDecision(draft, entryIdToEdit, { aiAccepted: true });
+}
+
+export function markConflictResolved(
+  draft: WorldImportDraft,
+  entryIdToEdit: string,
+): WorldImportDraft {
+  return setUserDecision(draft, entryIdToEdit, { conflictResolved: true });
 }

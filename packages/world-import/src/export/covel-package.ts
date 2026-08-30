@@ -314,6 +314,10 @@ function lorebookKeys(entry: DraftEntry): string[] {
 }
 
 function lorebookContent(entry: DraftEntry): string {
+  // User decisions override the provenance markers: an accepted inference or
+  // a resolved conflict ships as plain content.
+  if (entry.conflictResolved === true) return entry.content;
+  if (entry.aiAccepted === true) return entry.content;
   if (entry.provenanceStatus === "conflict") {
     const notes = entry.conflictNotes
       ? `冲突说明：${entry.conflictNotes}。`
@@ -341,6 +345,8 @@ const TYPE_SECTION_TITLES: Record<string, string> = {
 
 function statusLabel(entry: DraftEntry): string {
   if (entry.userEdited === true) return "已人工修订";
+  if (entry.conflictResolved === true) return "冲突已解决";
+  if (entry.aiAccepted === true) return "已采纳推断";
   switch (entry.provenanceStatus) {
     case "source-backed":
       return "有来源";
