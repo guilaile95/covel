@@ -72,6 +72,24 @@ class PartialStreamThenThrowLLM implements LLMAdapter {
   }
 }
 
+class SuccessfulStreamLLM implements LLMAdapter {
+  generate = vi.fn<LLMAdapter["generate"]>(async (): Promise<LLMResponse> => ({
+    content: "UNEXPECTED_FALLBACK",
+    toolCalls: [],
+    finishReason: "stop",
+    usage: { inputTokens: 1, outputTokens: 1 },
+  }));
+
+  async *stream(): AsyncGenerator<LLMStreamEvent> {
+    yield { type: "text-delta" as const, textDelta: "Streamed story" };
+    yield {
+      type: "done" as const,
+      finishReason: "stop",
+      usage: { inputTokens: 42, outputTokens: 7 },
+    };
+  }
+}
+
 /**
  * LLM whose stream throws before yielding any content.
  * `generate` is a spy so tests can assert fallback invocation count.
@@ -133,6 +151,29 @@ describe("TurnExecutor stream recovery", () => {
 
   afterEach(() => {
     warnSpy.mockRestore();
+  });
+
+  it("persists token usage from a successful stream", async () => {
+    const llm = new SuccessfulStreamLLM();
+    const store = await createMainLoopStore("sess-1");
+    const deps: TurnExecutorDeps = {
+      loadRuntime: async () => narratorLoaded,
+      llm,
+      store,
+      onDelta: async () => {
+        /* consume deltas */
+      },
+    };
+
+    const result = await executeTurn(makeTurnInput(), [noToolManifest], deps);
+
+    expect(result.runtimeResults[0]?.tokenUsage).toEqual({
+      input: 42,
+      output: 7,
+    });
+    expect(llm.generate).not.toHaveBeenCalled();
+    const persisted = await store.listRuntimeResults("sess-1", "turn-1");
+    expect(persisted[0]?.tokenUsage).toEqual({ input: 42, output: 7 });
   });
 
   it("stream throws after yielding content: salvages accumulated text and marks error finishReason", async () => {

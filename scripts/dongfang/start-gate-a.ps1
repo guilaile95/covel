@@ -6,7 +6,7 @@
 #   .\scripts\dongfang\start-gate-a.ps1 -Memory on # Memory ON turn
 #
 # What it does:
-#   1. kills leftover covel-spike dev processes on ports 3001/5173
+#   1. stops leftover dev processes belonging to this worktree
 #   2. first-run guidance for llm.toml / .env.llm (API key, same model as your
 #      plain-Chat A path!)
 #   3. sets COVEL_MEMORY_UPDATES per -Memory, starts `pnpm dev`, waits healthy
@@ -27,32 +27,18 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)   # covel-spike root
 Set-Location $repo
 
-$ports = @(3001, 5173)
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $resultsDir = Join-Path $repo "gate-results\memory-$Memory-$runId"
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 $runStart = (Get-Date).ToUniversalTime().ToString("o")
 
-function Get-PortPid([int]$p) {
-    $line = (netstat -ano | Select-String ":$p\s.*LISTENING" | Select-Object -First 1)
-    if ($line) { return ($line.ToString().Trim() -split "\s+")[-1] }
-    return $null
-}
-
 # ── 1. leftover covel dev processes ─────────────────────────────
-foreach ($p in $ports) {
-    $pid2 = Get-PortPid $p
-    if ($pid2) {
-        $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$pid2").CommandLine
-        if ($cmdline -and $cmdline -match "covel-spike") {
-            Write-Host "[cleanup] killing leftover covel-spike process (port $p, pid $pid2)"
-            Stop-Process -Id $pid2 -Force -ErrorAction SilentlyContinue
-        } else {
-            Write-Host "[abort] port $p is used by a non-covel process (pid $pid2): $cmdline"
-            Write-Host "        close it yourself, then re-run."
-            exit 1
-        }
-    }
+# The repo stop command filters by this exact worktree path, so it removes
+# orphaned server/Vite children without touching another Covel worktree.
+Write-Host "[cleanup] stopping leftover dev processes from this worktree ..."
+pnpm stop
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to stop leftover dev processes"
 }
 
 # ── 2. model config happens in the browser Settings UI ─────────
@@ -166,7 +152,7 @@ function Collect-Sessions {
 }
 
 function Get-StorySlotSummary {
-    $toml = Join-Path $repo "llm.toml"
+    $toml = Join-Path $repo "apps\server\llm.toml"
     if (Test-Path $toml) {
         $m = Select-String -Path $toml -Pattern "^\s*model\s*=\s*""([^""]+)""" | Select-Object -First 1
         if ($m) { return $m.Matches[0].Groups[1].Value }
@@ -186,15 +172,7 @@ if ($AutoQuit) {
 }
 
 # ── stop dev services ───────────────────────────────────────────
-foreach ($p in $ports) {
-    $pid2 = Get-PortPid $p
-    if ($pid2) {
-        $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$pid2").CommandLine
-        if ($cmdline -and $cmdline -match "covel-spike") {
-            Stop-Process -Id $pid2 -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
+pnpm stop
 if ($dev -and !$dev.HasExited) { Stop-Process -Id $dev.Id -Force -ErrorAction SilentlyContinue }
 Write-Host "[done] results in: $resultsDir"
 Write-Host "[done] remember to fill the Gate report template (docs\dongfang\GATE_A_SPIKE.md)."

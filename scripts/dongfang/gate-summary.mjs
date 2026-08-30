@@ -80,8 +80,8 @@ function parseUsage(raw) {
   try {
     const u = JSON.parse(raw);
     return {
-      inputTokens: u.inputTokens ?? u.prompt_tokens ?? 0,
-      outputTokens: u.outputTokens ?? u.completion_tokens ?? 0,
+      inputTokens: u.inputTokens ?? u.input ?? u.prompt_tokens ?? 0,
+      outputTokens: u.outputTokens ?? u.output ?? u.completion_tokens ?? 0,
     };
   } catch {
     return { inputTokens: 0, outputTokens: 0 };

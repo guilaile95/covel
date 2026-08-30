@@ -6,7 +6,7 @@ describe("Gate summary accounting", () => {
     const runtimeRows = [
       {
         runtimeId: "prompt-play-narrator",
-        tokenUsage: JSON.stringify({ inputTokens: 20000, outputTokens: 800 }),
+        tokenUsage: JSON.stringify({ input: 20000, output: 800 }),
         durationMs: 450,
       },
       {
@@ -16,13 +16,17 @@ describe("Gate summary accounting", () => {
       },
       { runtimeId: "pregame", tokenUsage: null, durationMs: 12 },
     ];
-    const memoryRows = [{ calls: 1, inputTokens: 1500, outputTokens: 90, durationMs: 1200 }];
+    const memoryRows = [
+      { calls: 1, inputTokens: 1500, outputTokens: 90, durationMs: 1200 },
+    ];
     const s = computeGateSummary(runtimeRows, memoryRows);
     expect(s.narratorCalls).toBe(1);
     expect(s.backgroundCalls).toBe(1);
     expect(s.memoryCalls).toBe(1);
     expect(s.totalCalls).toBe(3);
-    expect(s.totalCalls).toBe(s.narratorCalls + s.backgroundCalls + s.memoryCalls);
+    expect(s.totalCalls).toBe(
+      s.narratorCalls + s.backgroundCalls + s.memoryCalls,
+    );
     expect(s.tokens.total.inputTokens).toBe(24500);
     expect(s.tokens.total.outputTokens).toBe(1010);
     expect(s.tokens.memory.inputTokens).toBe(1500);
@@ -42,7 +46,9 @@ describe("Gate summary accounting", () => {
     const s = computeGateSummary(runtimeRows, []);
     expect(s.memoryCalls).toBe(0);
     expect(s.totalCalls).toBe(1);
-    expect(s.totalCalls).toBe(s.narratorCalls + s.backgroundCalls + s.memoryCalls);
+    expect(s.totalCalls).toBe(
+      s.narratorCalls + s.backgroundCalls + s.memoryCalls,
+    );
   });
 
   it("memory retries count as separate calls", () => {

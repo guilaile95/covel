@@ -36,6 +36,7 @@ const OPENAI_PROTECTED_KEYS = new Set([
   "model",
   "messages",
   "stream",
+  "stream_options",
   "max_tokens",
   "response_format",
   // `input` is protected for embeddings — it is built from params.values.
@@ -254,6 +255,10 @@ export function createOpenAiChatAdapter(): ModelProviderAdapter {
         model: params.model,
         messages: serializeMessages(messages),
         stream: true,
+        // Ask OpenAI-compatible providers for the terminal usage chunk so
+        // streamed turns still report token usage (providers that don't
+        // support the option simply ignore it).
+        stream_options: { include_usage: true },
         ...sanitizeOpenAiMetadata(params.providerRequestMetadata),
         ...extractOpenAiParameterOverrides(
           params.providerRequestMetadata,

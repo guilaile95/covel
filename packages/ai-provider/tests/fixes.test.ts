@@ -253,7 +253,10 @@ describe("providerRequestMetadata cannot override critical fields", () => {
       {
         model: "gpt-4o",
         messages: [{ role: "user", content: "hi", toolCalls: undefined }],
-        providerRequestMetadata: { stream: false },
+        providerRequestMetadata: {
+          stream: false,
+          stream_options: { include_usage: false },
+        },
       },
       { profile: {} as never, preset: undefined, mode: "stream" },
     );
@@ -265,6 +268,7 @@ describe("providerRequestMetadata cannot override critical fields", () => {
       (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
     ) as Record<string, unknown>;
     expect(body["stream"]).toBe(true);
+    expect(body["stream_options"]).toEqual({ include_usage: true });
   });
 
   it("openai-chat generateObject: metadata cannot override response_format", async () => {

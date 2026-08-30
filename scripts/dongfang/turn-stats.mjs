@@ -16,7 +16,9 @@ import { createRequire } from "node:module";
 
 const [, , sessionId, dbArg] = process.argv;
 if (!sessionId) {
-  console.error("usage: node scripts/dongfang/turn-stats.mjs <sessionId> [covel.db]");
+  console.error(
+    "usage: node scripts/dongfang/turn-stats.mjs <sessionId> [covel.db]",
+  );
   process.exit(1);
 }
 
@@ -45,7 +47,9 @@ function findDb() {
 
 const dbPath = findDb();
 if (!dbPath) {
-  console.error("covel.db not found — pass the path explicitly as the 2nd argument.");
+  console.error(
+    "covel.db not found — pass the path explicitly as the 2nd argument.",
+  );
   process.exit(1);
 }
 
@@ -80,8 +84,18 @@ function tokens(raw) {
   try {
     const u = JSON.parse(raw);
     // usage shapes vary by adapter; normalize common fields
-    const input = u.inputTokens ?? u.prompt_tokens ?? u.input?.tokens ?? u.input_tokens ?? null;
-    const output = u.outputTokens ?? u.completion_tokens ?? u.output?.tokens ?? u.output_tokens ?? null;
+    const input =
+      u.inputTokens ??
+      (typeof u.input === "number" ? u.input : u.input?.tokens) ??
+      u.prompt_tokens ??
+      u.input_tokens ??
+      null;
+    const output =
+      u.outputTokens ??
+      (typeof u.output === "number" ? u.output : u.output?.tokens) ??
+      u.completion_tokens ??
+      u.output_tokens ??
+      null;
     return { input, output, raw: u };
   } catch {
     return null;
@@ -103,16 +117,41 @@ let grandElapsed = 0;
 // post-turn-memory.ts which writes trace type "memory.llm").
 const memoryRows = db
   .prepare(
-    `SELECT turn_id AS turnId, payload, created_at AS createdAt
+    `SELECT turn_id AS turnId, payload
        FROM trace_events WHERE session_id = ? AND type = 'memory.llm'
        ORDER BY created_at`,
   )
   .all(sessionId)
   .map((r) => {
     let p = {};
-    try { p = JSON.parse(r.payload) ?? {}; } catch {}
-    return { turnId: r.turnId, calls: p.calls ?? 1, inputTokens: p.inputTokens ?? 0, outputTokens: p.outputTokens ?? 0, error: p.error, durationMs: p.durationMs, at: Date.parse(r.createdAt) };
+    try {
+      p = JSON.parse(r.payload) ?? {};
+    } catch {}
+    return {
+      turnId: r.turnId,
+      calls: p.calls ?? 1,
+      inputTokens: p.inputTokens ?? 0,
+      outputTokens: p.outputTokens ?? 0,
+      error: p.error,
+      durationMs: p.durationMs,
+    };
   });
+const turnTraceRows = db
+  .prepare(
+    `SELECT turn_id AS turnId, type, created_at AS createdAt
+       FROM trace_events
+      WHERE session_id = ? AND type IN ('turn.started', 'turn.completed')
+      ORDER BY created_at`,
+  )
+  .all(sessionId);
+const turnTimings = new Map();
+for (const event of turnTraceRows) {
+  const timing = turnTimings.get(event.turnId) ?? {};
+  timing[event.type === "turn.started" ? "startedAt" : "completedAt"] =
+    Date.parse(event.createdAt);
+  turnTimings.set(event.turnId, timing);
+}
+
 const memoryByTurn = new Map();
 for (const m of memoryRows) {
   if (!memoryByTurn.has(m.turnId)) memoryByTurn.set(m.turnId, []);
@@ -126,7 +165,9 @@ console.log(`session ${sessionId} — ${dbPath}`);
 console.log("─".repeat(100));
 for (const { turnId, entries } of turns.values()) {
   const llm = entries.filter((e) => tokens(e.tokenUsage) !== null);
-  const narr = llm.filter((e) => e.runtimeId === NARRATOR || e.pluginId === NARRATOR);
+  const narr = llm.filter(
+    (e) => e.runtimeId === NARRATOR || e.pluginId === NARRATOR,
+  );
   const back = llm.filter((e) => !narr.includes(e));
   const sum = (list) =>
     list.reduce(
@@ -144,10 +185,15 @@ for (const { turnId, entries } of turns.values()) {
   const memOut = memList.reduce((a, m) => a + m.outputTokens, 0);
   const narrLat = narr.reduce((a, e) => a + (e.durationMs ?? 0), 0);
   const memLat = memList.reduce((a, m) => a + (m.durationMs ?? 0), 0);
-  const maxDur = Math.max(...entries.map((e) => e.durationMs ?? 0), ...memList.map((m) => m.durationMs ?? 0));
-  // wall-clock elapsed for the turn: span between first and last event
-  const stamps = [...entries.map((e) => Date.parse(e.createdAt)), ...memList.map((m) => m.at ?? NaN)].filter(Number.isFinite);
-  const turnElapsed = stamps.length >= 2 ? Math.max(...stamps) - Math.min(...stamps) : 0;
+  const maxDur = Math.max(
+    ...entries.map((e) => e.durationMs ?? 0),
+    ...memList.map((m) => m.durationMs ?? 0),
+  );
+  const timing = turnTimings.get(turnId);
+  const turnElapsed =
+    Number.isFinite(timing?.startedAt) && Number.isFinite(timing?.completedAt)
+      ? Math.max(0, timing.completedAt - timing.startedAt)
+      : 0;
   grandCalls += llm.length;
   grandIn += narrSum.in + backSum.in;
   grandOut += narrSum.out + backSum.out;
@@ -169,7 +215,9 @@ for (const { turnId, entries } of turns.values()) {
     const t = tokens(e.tokenUsage);
     console.log(
       `   · ${e.pluginId}/${e.runtimeId} [${e.status}] ${e.durationMs}ms` +
-        (t ? ` tokens in ${t.input ?? "?"} out ${t.output ?? "?"}` : " (no LLM)"),
+        (t
+          ? ` tokens in ${t.input ?? "?"} out ${t.output ?? "?"}`
+          : " (no LLM)"),
     );
   }
   for (const m of memList) {
@@ -190,7 +238,8 @@ console.log(
 console.log(
   `[accounting] narrator ${grandNarrCount} + background ${grandBackCount} + memory ${memoryCallsTotal}` +
     ` = total ${grandNarrCount + grandBackCount + memoryCallsTotal}` +
-    (grandNarrCount + grandBackCount + memoryCallsTotal === grandCalls + memoryCallsTotal
+    (grandNarrCount + grandBackCount + memoryCallsTotal ===
+    grandCalls + memoryCallsTotal
       ? "  ✓ balanced"
       : "  ✗ MISMATCH"),
 );
