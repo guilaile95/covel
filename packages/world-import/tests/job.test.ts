@@ -120,6 +120,9 @@ describe("import job core", () => {
 
     const healed = failingAdapter(-1);
     const restored = restoreImportJob(checkpoint, { adapter: healed });
+    // job identity survives restore
+    expect(restored.jobId).toBe(checkpoint.jobId);
+    expect(restored.jobId).toBe(job.jobId);
     const result = await runImportJob(restored);
     expect(getImportProgress(restored).status).toBe("completed");
     // only the remaining chunks hit the new adapter

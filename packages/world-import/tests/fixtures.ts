@@ -37,6 +37,7 @@ export const NOVEL_TXT = [
   "第六章 盟约",
   "林晚与沈铎在雾塔下结为盟友。",
   "霜脉在两人掌心同时亮起，像两盏灯。",
+  "而雾塔的簿册上写着二十一岁。",
 ].join("\n");
 
 // ── .md setting collection ─────────────────────────────────────
@@ -171,6 +172,22 @@ export const FIXTURE_RULES: FakeRule[] = [
         content: "她说自己十六岁。",
         paragraphs: "match",
         claims: [{ field: "age", value: "16" }],
+      },
+    ],
+  },
+  {
+    // A third, later value for the same field — used to prove that a NEW
+    // conflict re-opens a conflictResolved entry while the old 16-vs-19
+    // pair stays suppressed.
+    anyOf: ["二十一岁"],
+    chapter: 6,
+    emit: [
+      {
+        type: "character",
+        name: "林晚",
+        content: "雾塔的簿册上写着二十一岁。",
+        paragraphs: "match",
+        claims: [{ field: "age", value: "21" }],
       },
     ],
   },

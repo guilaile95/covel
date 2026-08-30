@@ -27,6 +27,58 @@ export function serializeDraft(draft: WorldImportDraft): string {
 
 export class DraftContractError extends Error {}
 
+/**
+ * Canonical v0 key sets. Unknown keys anywhere inside draft / source /
+ * entry / sourceRef are rejected (v0 is strict — no extension bag, no
+ * silent field drops).
+ */
+const DRAFT_KEYS: ReadonlySet<string> = new Set([
+  "version",
+  "id",
+  "title",
+  "sources",
+  "summary",
+  "entries",
+]);
+const SOURCE_KEYS: ReadonlySet<string> = new Set([
+  "id",
+  "file",
+  "kind",
+  "title",
+]);
+const ENTRY_KEYS: ReadonlySet<string> = new Set([
+  "id",
+  "type",
+  "name",
+  "aliases",
+  "content",
+  "provenanceStatus",
+  "sourceRefs",
+  "conflictNotes",
+  "userEdited",
+  "aiAccepted",
+  "conflictResolved",
+]);
+const SOURCE_REF_KEYS: ReadonlySet<string> = new Set([
+  "sourceId",
+  "locator",
+  "quote",
+]);
+
+function rejectUnknownKeys(
+  raw: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  what: string,
+): void {
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      throw new DraftContractError(
+        `${what}: unknown contract field "${key}" (v0 allows only: ${[...allowed].join(", ")})`,
+      );
+    }
+  }
+}
+
 function requireObject(value: unknown, what: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new DraftContractError(`${what} must be an object`);
@@ -66,6 +118,7 @@ function parseProvenanceStatus(value: string, what: string): ProvenanceStatus {
 function parseEntry(value: unknown, index: number): DraftEntry {
   const what = `entries[${index}]`;
   const raw = requireObject(value, what);
+  rejectUnknownKeys(raw, ENTRY_KEYS, what);
   const entry: DraftEntry = {
     id: requireString(raw.id, `${what}.id`),
     type: parseEntryType(requireString(raw.type, `${what}.type`), what),
@@ -113,6 +166,7 @@ function requireStringArrayKeyed(
   }
   return value.map((item, i) => {
     const ref = requireObject(item, `${what}.${field}[${i}]`);
+    rejectUnknownKeys(ref, SOURCE_REF_KEYS, `${what}.${field}[${i}]`);
     return {
       sourceId: requireString(ref.sourceId, `${what}.${field}[${i}].sourceId`),
       locator: requireString(ref.locator, `${what}.${field}[${i}].locator`),
@@ -133,6 +187,7 @@ export function loadDraft(json: string): WorldImportDraft {
     throw new DraftContractError(`invalid JSON: ${String(error)}`);
   }
   const raw = requireObject(parsed, "draft");
+  rejectUnknownKeys(raw, DRAFT_KEYS, "draft");
 
   const version = raw.version;
   if (version !== DRAFT_VERSION) {
@@ -143,6 +198,7 @@ export function loadDraft(json: string): WorldImportDraft {
 
   const sourcesRaw = requireArray(raw.sources, "sources").map((item, i) => {
     const source = requireObject(item, `sources[${i}]`);
+    rejectUnknownKeys(source, SOURCE_KEYS, `sources[${i}]`);
     const kindRaw = requireString(source.kind, `sources[${i}].kind`);
     if (!(SOURCE_KINDS as string[]).includes(kindRaw)) {
       throw new DraftContractError(

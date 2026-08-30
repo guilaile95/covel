@@ -7,6 +7,79 @@ import {
 } from "../src/draft.js";
 import { findEntry, runFixturePipeline } from "./helpers.js";
 
+const VALID_DRAFT = {
+  version: 0,
+  id: "x",
+  title: "t",
+  sources: [],
+  summary: "",
+  entries: [],
+};
+
+describe("unknown contract fields are rejected, not dropped", () => {
+  it("rejects unknown fields at the draft root with the field path", () => {
+    expect(() =>
+      loadDraft(JSON.stringify({ ...VALID_DRAFT, extensionBag: { a: 1 } })),
+    ).toThrow(/draft: unknown contract field "extensionBag"/);
+  });
+
+  it("rejects unknown fields on sources", () => {
+    expect(() =>
+      loadDraft(
+        JSON.stringify({
+          ...VALID_DRAFT,
+          sources: [{ id: "s", file: "f.txt", kind: "txt", huh: 1 }],
+        }),
+      ),
+    ).toThrow(/sources\[0\]: unknown contract field "huh"/);
+  });
+
+  it("rejects unknown fields on entries", () => {
+    expect(() =>
+      loadDraft(
+        JSON.stringify({
+          ...VALID_DRAFT,
+          entries: [
+            {
+              id: "e",
+              type: "item",
+              name: "n",
+              aliases: [],
+              content: "c",
+              provenanceStatus: "ai-inferred",
+              sourceRefs: [],
+              eviltwin: true,
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/entries\[0\]: unknown contract field "eviltwin"/);
+  });
+
+  it("rejects unknown fields on sourceRefs", () => {
+    expect(() =>
+      loadDraft(
+        JSON.stringify({
+          ...VALID_DRAFT,
+          entries: [
+            {
+              id: "e",
+              type: "item",
+              name: "n",
+              aliases: [],
+              content: "c",
+              provenanceStatus: "source-backed",
+              sourceRefs: [
+                { sourceId: "s", locator: "chapter:1;paragraph:1-1", page: 3 },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/entries\[0\].sourceRefs\[0\]: unknown contract field "page"/);
+  });
+});
+
 describe("draft serialization", () => {
   it("round-trips through serialize/load without loss", async () => {
     const { draft } = await runFixturePipeline({});

@@ -88,7 +88,8 @@ const ZERO_USAGE: ImportJobUsage = {
 };
 
 export class ImportJob {
-  readonly jobId: string;
+  /** Stable across checkpoint export/restore (restore re-applies the old id). */
+  jobId: string;
 
   private status: ImportJobStatus = "queued";
   private chunks: Chunk[] | undefined;
@@ -319,6 +320,7 @@ export class ImportJob {
 
   /** Internal: apply a checkpoint produced by exportCheckpoint(). */
   static restoreFrom(checkpoint: ImportJobCheckpoint, job: ImportJob): void {
+    job.jobId = checkpoint.jobId; // identity survives restore
     job.sources =
       checkpoint.sources.length > 0 ? checkpoint.sources : undefined;
     job.chunks = checkpoint.chunks.length > 0 ? checkpoint.chunks : undefined;
