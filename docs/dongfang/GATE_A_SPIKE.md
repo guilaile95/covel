@@ -19,24 +19,26 @@
 
 预期透传会话的每回合调用：**1 次**（直玩叙事）+ 0 次后台（memory off 档）；memory on 档 = 2 次（+记忆重写）+ 超长对话偶发 Compactor。
 
-## 二、B 路径运行步骤（Owner）
+## 二、B 路径运行步骤（Owner：一键启动器）
+
+只需要一个命令（PowerShell，在 `covel-spike` 目录下）：
 
 ```powershell
-cd E:\AI Projects\Dongfang-Rhapsody\covel-spike
-pnpm install                      # 首次
-copy llm.toml.example llm.toml    # 模型槽位（story slot 填你打算用的模型，例如 Gemini 走 OpenAI 兼容端点或 DeepSeek 官方）
-copy .env.llm.example .env.llm    # 自己填 API key（勿提交）
-pnpm dev                          # web :5173 + server :3001
+.\scripts\dongfang\start-gate-a.ps1              # Memory OFF 局（默认）
+.\scripts\dongfang\start-gate-a.ps1 -Memory on   # Memory ON 对照局
 ```
 
-1. 打开 <http://localhost:5173> → 设置里确认模型连接（llm.toml 的 story slot）。
-2. 世界选择 → **直玩（提示词透传）** → 开始。
-3. 预期：**不出现 covel 创角表单**，直接进入叙事；发送「开始」（或任意开场指令），《凡人修仙人生模拟器》应按其自身规则开始主持（出身/灵根等由 Prompt 流程决定）。
-4. 自由游玩 ≥5 回合（覆盖：按 Prompt 判定/数值系统操作、跨场景、时间推进）。
-5. **Memory 开档对照**：关掉服务，`$env:COVEL_MEMORY_UPDATES="off"; pnpm dev`（PowerShell）再开一局重复 2-4；两档各留一个 session。
-6. 保存/退出/恢复：直接关浏览器/停服务 → 重新 `pnpm dev` → 从会话列表恢复同一局继续玩（存档为自动快照 + SQLite，非手动保存制）。
+启动器自动完成：残留端口清理 → 首次运行时引导你填 `llm.toml`（story slot 选**与 A 路径相同的模型**）和 `.env.llm`（只填 key，不进 Git）→ 按档设置 `COVEL_MEMORY_UPDATES` → 启动服务并探活 → 自动打开浏览器。
 
-若某步表现与预期不符（如仍出现创角表单/后台 agent），记录 session id——那就是 spike 的失败证据，不要绕。
+你要做的：
+
+1. 浏览器里选世界 **直玩（提示词透传）** → 开始。
+2. 预期：**不出现 covel 创角表单**，直接进入叙事；发「开始」后《凡人修仙人生模拟器》按其自身规则主持（出身/灵根等由 Prompt 流程决定）。
+3. 自由游玩 ≥5 自然回合（不用固定台词、不为通过而 reroll）。
+4. 保存/退出/恢复：直接关浏览器 → 重开 <http://localhost:5173> → 从会话列表继续同一局。
+5. 回到启动器窗口**按回车**——自动按 session 采集调用/token/延迟到 `gate-results\`；两档（off/on）各跑一局。
+
+若出现创角表单或明显框架化输出，保留 session id——那是 spike 的失败证据，不要绕。
 
 ## 三、A 路径（Owner）
 
@@ -44,13 +46,15 @@ pnpm dev                          # web :5173 + server :3001
 
 ## 四、数据采集
 
-每个 session 结束后：
+**启动器已自动采集**：每次按回车，本次运行创建的 session 统计自动写入 `gate-results\memory-<off|on>-<时间戳>\<sessionId>.txt`（含每回合调用数、叙事 vs 后台 token、延迟）。
+
+手动备用（单独补采某个 session）：
 
 ```powershell
 node scripts\dongfang\turn-stats.mjs <sessionId> [可选 db 路径]
 ```
 
-输出每回合：LLM 调用数、直玩叙事 vs 后台的输入/输出 token、最慢运行时毫秒。dev 模式 SQLite 路径以启动日志为准（找不到就把 db 路径作为第二个参数传入）。
+输出每回合：LLM 调用数、直玩叙事 vs 后台的输入/输出 token、最慢运行时毫秒。dev 模式 SQLite 位于 `apps\server\data\covel.db`（找不到就把 db 路径作为第二个参数传入）。
 
 ## 五、Gate 报告（模板——实测后填写）
 
