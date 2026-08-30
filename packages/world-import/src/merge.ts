@@ -376,7 +376,20 @@ function finalizeEntry(entry: InternalEntry): DraftEntry {
   };
 
   if (newConflicts.length > 0) {
-    result.conflictNotes = newConflicts.map((c) => c.text).join("；");
+    // Re-opened: previously resolved fingerprints must survive (they are
+    // still resolved and must not re-report later), so the old notes stay
+    // as the carrier and the new conflicts are appended.
+    const carriedNotes =
+      entry.conflictResolved === true ? entry.conflictNotes : undefined;
+    const freshNotes = newConflicts.map((c) => c.text).join("；");
+    result.conflictNotes =
+      carriedNotes && carriedNotes.length > 0
+        ? `${carriedNotes}；${freshNotes}`
+        : freshNotes;
+  } else if (staysResolved && entry.conflictNotes) {
+    // Quiet round: carry the resolved fingerprints forward verbatim so the
+    // NEXT re-merge can still tell old conflicts from new ones.
+    result.conflictNotes = entry.conflictNotes;
   }
   if (entry.aiAccepted === true) result.aiAccepted = true;
   if (staysResolved) result.conflictResolved = true;

@@ -50,7 +50,10 @@ describe("contract decision fields", () => {
 
     expect(after.conflictResolved).toBe(true);
     expect(after.provenanceStatus).not.toBe("conflict");
-    expect(after.conflictNotes).toBeUndefined();
+    // the resolved fingerprints stay in the notes so LATER re-merges can
+    // still tell the old conflict from a new one
+    expect(after.conflictNotes).toContain("16");
+    expect(after.conflictNotes).toContain("19");
     // contributions still flow in (not frozen like userEdited)
     expect(after.content).toContain("十六岁");
     expect(after.sourceRefs.length).toBeGreaterThan(0);
@@ -162,11 +165,12 @@ describe("conflict fingerprint semantics", () => {
     const linWan2 = findEntry(second, "林晚");
     expect(linWan2.conflictResolved).toBe(true);
     expect(linWan2.provenanceStatus).not.toBe("conflict");
-    expect(linWan2.conflictNotes).toBeUndefined();
+    // fingerprint carrier is kept for later rounds
+    expect(linWan2.conflictNotes).toContain("16");
 
-    // round 3: NEW value 21 → conflict re-opens, resolved flag cleared,
-    // notes report the new pair (16 vs 21) but NOT the old resolved one
-    // (16 vs 19 never re-appears)
+    // round 3: NEW value 21 → conflict re-opens, resolved flag cleared;
+    // notes report the new pair (16 vs 21) AND keep the historical resolved
+    // pair (16 vs 19) so it never re-reports in later rounds
     const third = mergeExtractions(META, [batch16, batch19, batch21], {
       existingDraft: decided,
     });
@@ -175,7 +179,7 @@ describe("conflict fingerprint semantics", () => {
     expect(linWan3.conflictResolved).toBeUndefined();
     expect(linWan3.conflictNotes).toContain("21");
     expect(linWan3.conflictNotes).toContain("16");
-    expect(linWan3.conflictNotes).not.toContain("19");
+    expect(linWan3.conflictNotes).toContain("19");
   });
 });
 
@@ -242,5 +246,80 @@ describe("decided entries survive rounds without new evidence", () => {
     expect(after.conflictResolved).toBe(true);
     // resolved + no new conflicts → the entry is no longer in conflict state
     expect(after.provenanceStatus).not.toBe("conflict");
+  });
+});
+
+describe("resolved fingerprints survive chained re-merges", () => {
+  // Every round uses the PREVIOUS round's output as its existingDraft —
+  // no test shortcuts back to the originally decided draft.
+  it("16v19 quiet across rounds; 21 re-opens; re-resolve silences every known pair", () => {
+    const batch16 = {
+      chunk: chunkOf("c1", ["她说自己十六岁。"]),
+      raw: [linWanClaim("16", "她说自己十六岁。")],
+    };
+    const batch19 = {
+      chunk: chunkOf("c2", ["名册上写着十九岁。"]),
+      raw: [linWanClaim("19", "名册上写着十九岁。")],
+    };
+    const batch21 = {
+      chunk: chunkOf("c3", ["雾塔的簿册上写着二十一岁。"]),
+      raw: [linWanClaim("21", "雾塔的簿册上写着二十一岁。")],
+    };
+    const resolve = (draft: ReturnType<typeof mergeExtractions>) =>
+      markConflictResolved(draft, findEntry(draft, "林晚").id);
+
+    // round 1: 16 vs 19 → conflict; Owner resolves
+    const round1 = mergeExtractions(META, [batch16, batch19]);
+    expect(findEntry(round1, "林晚").provenanceStatus).toBe("conflict");
+    const decided1 = resolve(round1);
+
+    // round 2 (input = round 1 output): quiet, fingerprints carried
+    const round2 = mergeExtractions(META, [batch16, batch19], {
+      existingDraft: decided1,
+    });
+    const quiet2 = findEntry(round2, "林晚");
+    expect(quiet2.conflictResolved).toBe(true);
+    expect(quiet2.provenanceStatus).not.toBe("conflict");
+    expect(quiet2.conflictNotes).toContain("16");
+
+    // round 3 (input = round 2 output): STILL quiet — the fingerprints
+    // survived the previous round's output
+    const round3 = mergeExtractions(META, [batch16, batch19], {
+      existingDraft: round2,
+    });
+    const quiet3 = findEntry(round3, "林晚");
+    expect(quiet3.conflictResolved).toBe(true);
+    expect(quiet3.provenanceStatus).not.toBe("conflict");
+
+    // round 4 (input = round 3 output): NEW value 21 → re-opens; the
+    // historical resolved pair must NOT be dropped from the carrier
+    const round4 = mergeExtractions(META, [batch16, batch19, batch21], {
+      existingDraft: round3,
+    });
+    const reopened = findEntry(round4, "林晚");
+    expect(reopened.provenanceStatus).toBe("conflict");
+    expect(reopened.conflictResolved).toBeUndefined();
+    expect(reopened.conflictNotes).toContain("21");
+    expect(reopened.conflictNotes).toContain("19"); // history preserved
+
+    // Owner resolves again
+    const decided2 = resolve(round4);
+
+    // round 5 (input = round 4 output): every resolved pair stays quiet
+    const round5 = mergeExtractions(META, [batch16, batch19, batch21], {
+      existingDraft: decided2,
+    });
+    const quiet5 = findEntry(round5, "林晚");
+    expect(quiet5.conflictResolved).toBe(true);
+    expect(quiet5.provenanceStatus).not.toBe("conflict");
+    expect(quiet5.conflictNotes).toContain("19");
+    expect(quiet5.conflictNotes).toContain("21");
+
+    // round 6 (input = round 5 output): still quiet, chains indefinitely
+    const round6 = mergeExtractions(META, [batch16, batch19, batch21], {
+      existingDraft: round5,
+    });
+    expect(findEntry(round6, "林晚").conflictResolved).toBe(true);
+    expect(findEntry(round6, "林晚").provenanceStatus).not.toBe("conflict");
   });
 });
