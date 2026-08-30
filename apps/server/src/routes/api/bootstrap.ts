@@ -42,6 +42,7 @@ import { stateRoutes } from "./state.js";
 import { eventRoutes } from "./events.js";
 import { createHealthRoutes } from "./health.js";
 import { worldRoutes } from "./worlds.js";
+import { createWorldImportRoutes } from "./world-import/index.js";
 import { messageRoutes } from "./messages.js";
 import { characterRoutes } from "./characters.js";
 import { actionRoutes } from "./actions.js";
@@ -683,6 +684,7 @@ export async function bootstrapApi(
   app.route("/api/events", eventRoutes);
   app.route("/api/events", subscribeRoutes);
   app.route("/api/worlds", worldRoutes);
+  app.route("/api/world-import", createWorldImportRoutes());
   app.route(
     "/api/health",
     createHealthRoutes(store, config.storeBackend, {

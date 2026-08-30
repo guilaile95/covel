@@ -107,7 +107,8 @@
     "studio": "Studio",
     "debug": "Debugger",
     "primary": "Primary",
-    "getStarted": "Get Started"
+    "getStarted": "Get Started",
+    "import": "World Import"
   },
   "session": {
     "config": "Studio Config",
@@ -1326,5 +1327,126 @@
     "empty": "No character blueprints yet",
     "instantiated": "Instantiated",
     "blueprintOnly": "Blueprint only"
+  },
+  "worldImport": {
+    "eyebrow": "World Import · Review Desk",
+    "metaVersion": "Contract version {{version}}",
+    "action": {
+      "save": "Save draft",
+      "export": "Export JSON"
+    },
+    "discard": {
+      "action": "Discard draft",
+      "confirmTitle": "Discard this draft?",
+      "confirmMessage": "Deletes the locally saved draft and your review decisions, and returns to the import wizard. This cannot be undone."
+    },
+    "savedAt": "Saved at {{time}}",
+    "notSavedYet": "Not saved yet",
+    "unsaved": "Unsaved changes",
+    "status": {
+      "loading": "Loading import draft…",
+      "error": "Failed to load the import draft",
+      "retry": "Retry",
+      "resetLocal": "Clear corrupted local draft"
+    },
+    "stats": {
+      "total": "Entries",
+      "sourceBacked": "Source-backed",
+      "aiInferred": "AI inferred",
+      "conflict": "Conflict",
+      "userEdited": "Edited",
+      "pending": "Pending"
+    },
+    "export": {
+      "conflictWarning": "Heads up: {{count}} conflict(s) are still unresolved."
+    },
+    "wizard": {
+      "title": "Import a new world",
+      "desc": "Pick your novel or setting documents (TXT / MD / EPUB) and let the import pipeline turn them into a reviewable world draft.",
+      "titleLabel": "World name",
+      "titlePlaceholder": "e.g. Mistport",
+      "fileLabel": "Source files",
+      "fileButton": "Choose TXT / MD / EPUB files (multi-select)",
+      "fileHint": "Supports .txt / .md / .epub, 20 MB total max.",
+      "removeFile": "Remove file {{name}}",
+      "start": "Start import",
+      "needTitle": "Enter a world name first.",
+      "needFiles": "Select at least one source file.",
+      "failed": "Import failed.",
+      "modelHint": "Extraction uses the currently configured model."
+    },
+    "progress": {
+      "parsing": "Parsing files…",
+      "extracting": "Extracting {{done}}/{{total}} chunks",
+      "done": "Import finished — opening review…"
+    },
+    "filter": {
+      "all": "All",
+      "pending": "Pending",
+      "ai-inferred": "AI inferred",
+      "conflict": "Conflict"
+    },
+    "category": {
+      "all": "All categories",
+      "character": "Characters",
+      "faction": "Factions",
+      "location": "Locations",
+      "item": "Items",
+      "rule": "Rules",
+      "power": "Power systems",
+      "event": "Events",
+      "relationship": "Relations"
+    },
+    "provenance": {
+      "source-backed": "Source-backed",
+      "ai-inferred": "AI inferred",
+      "conflict": "Conflict"
+    },
+    "entryStatus": {
+      "unreviewed": "Unreviewed",
+      "edited": "Edited",
+      "aiAccepted": "AI accepted",
+      "conflictResolved": "Conflict resolved"
+    },
+    "list": {
+      "empty": "No entries under this filter."
+    },
+    "detail": {
+      "noSelection": "Select an entry on the left to inspect sources and edit.",
+      "name": "Name",
+      "aliases": "Aliases",
+      "aliasItem": "Alias {{index}}",
+      "removeAlias": "Remove alias {{index}}",
+      "addAlias": "Add alias",
+      "content": "Content",
+      "sourceRefs": "Source locators",
+      "noSourceRefs": "No source references — this entry is fully AI inferred.",
+      "userEdited": "Edited"
+    },
+    "conflict": {
+      "title": "Conflict resolution",
+      "notes": "Conflict notes",
+      "markResolved": "Mark conflict resolved",
+      "unmark": "Unmark resolution",
+      "resolved": "Resolved",
+      "noNotes": "No conflict notes"
+    },
+    "ai": {
+      "title": "AI inference",
+      "accept": "Accept AI inference",
+      "accepted": "Accepted",
+      "delete": "Delete AI inference",
+      "deleteConfirmTitle": "Delete this AI inference?",
+      "deleteConfirmMessage": "Entry \"{{name}}\" will be removed. It cannot be recovered after saving, unless you re-import."
+    },
+    "approve": {
+      "title": "Approve & generate world",
+      "action": "Approve & generate world",
+      "blockedHint": "{{count}} unresolved conflict(s) left — resolve them before approving.",
+      "successTitle": "World generated",
+      "successBody": "World \"{{name}}\" passed the Covel loader check and joined your world list.",
+      "startGame": "Start playing",
+      "failedTitle": "World generation failed"
+    }
   }
 }

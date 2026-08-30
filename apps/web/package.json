@@ -20,6 +20,7 @@
     "@covel/settings": "workspace:*",
     "@covel/shared": "workspace:*",
     "@covel/store": "workspace:*",
+    "@covel/world-import": "workspace:*",
     "@json-render/core": "^0.20.0",
     "@json-render/react": "^0.20.0",
     "@radix-ui/react-dialog": "^1.1.23",

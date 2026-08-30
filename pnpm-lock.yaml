@@ -114,6 +114,9 @@ importers:
       '@covel/tools':
         specifier: workspace:*
         version: link:../../packages/tools
+      '@covel/world-import':
+        specifier: workspace:*
+        version: link:../../packages/world-import
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.3)
@@ -172,6 +175,9 @@ importers:
       '@covel/store':
         specifier: workspace:*
         version: link:../../packages/store
+      '@covel/world-import':
+        specifier: workspace:*
+        version: link:../../packages/world-import
       '@json-render/core':
         specifier: ^0.20.0
         version: 0.20.0(zod@4.4.3)
